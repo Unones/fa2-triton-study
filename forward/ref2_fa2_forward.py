@@ -25,21 +25,38 @@ def ref2_fa2_forward(
     nb_tiles_col = ceil(N / BS_col)
     
     for i in range(1, nb_tiles_row+1):
-        q = q_tensor[(i-1)*BS_row : i*BS_row]
         
-        o_row = torch.zeros((BS_row, d), dtype=dtype, device=device)
-        l_row = torch.zeros((BS_row,), dtype=dtype, device=device)
-        m_row = torch.full((BS_row,), fill_value=-float("inf"), dtype=dtype, device=device)
+        start_i = (i-1)*BS_row
+        end_i = i*BS_row
+        
+        if i == nb_tiles_row:
+            end_i = q_tensor.shape[0]
+        
+        q = q_tensor[start_i : end_i]
+        
+        nb_elems_interval = end_i - start_i
+        
+        o_row = torch.zeros((nb_elems_interval, d), dtype=dtype, device=device)
+        l_row = torch.zeros((nb_elems_interval,), dtype=dtype, device=device)
+        m_row = torch.full((nb_elems_interval,), fill_value=-float("inf"), dtype=dtype, device=device)
 
         for j in range(1, nb_tiles_col+1):
-            k = k_tensor[(j-1)*BS_col : j*BS_col]
-            v = v_tensor[(j-1)*BS_col : j*BS_col]
+            
+            start_j = (j-1)*BS_col
+            end_j = j*BS_col
+        
+            if j == nb_tiles_col:
+                end_j = k_tensor.shape[0]
+
+            k = k_tensor[start_j : end_j]
+            v = v_tensor[start_j : end_j]
 
             k_t = torch.transpose(k, 0, 1)
             s = q @ k_t / sqrt(d)
-            
+
             rowmax_s = torch.max(s, dim=1)
             former_m_row = m_row
+
             m_row = torch.maximum(m_row,rowmax_s.values)
             
             p = torch.exp(s - m_row[:, None])

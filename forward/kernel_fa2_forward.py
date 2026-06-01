@@ -1,6 +1,3 @@
-import os
-os.environ["TRITON_INTERPRET"] = "1"
-
 import triton
 import triton.language as tl
 import torch
@@ -17,7 +14,7 @@ def _kernel_fa2_forward(
     size_row, size_col, hidden_dimension : tl.constexpr, d, d_sqrt,
     stride_q_row, stride_k_col,
     stride_v_col,
-    output_dtype,
+    output_dtype : tl.constexpr,
     nb_tiles_col : tl.constexpr,
     BS_row : tl.constexpr,
     BS_col : tl.constexpr,
@@ -40,7 +37,7 @@ def _kernel_fa2_forward(
     offset_q = offset_q_row[:, None] + offset_d[None, :]
     mask_q = mask_row[:, None] & mask_d[None, :]
 
-    q = tl.load(q_ptr + offset_q, mask=mask_q, other=0)
+    q = tl.load(q_ptr + offset_q, mask=mask_q, other=0).to(dtype=tl.float32)
     
     o_row = tl.zeros((BS_row, hidden_dimension), dtype=tl.float32)
     l_row = tl.zeros((BS_row,), dtype=tl.float32)
@@ -93,14 +90,21 @@ def _kernel_fa2_forward(
     tl.store(o_ptr + offset_q, o_row, mask=mask_q)
     tl.store(L_ptr + offset_row, L_row, mask=mask_row)
     
+torch_to_triton_dtypes = {
+    torch.float32 : tl.float32,
+    torch.float16 : tl.float16,
+    torch.bfloat16 : tl.bfloat16
+}
+
 
 def fa2_forward(
     q_tensor : torch.Tensor, 
     k_tensor : torch.Tensor, 
-    v_tensor : torch.Tensor   
+    v_tensor : torch.Tensor,
+    output_dtype 
 ):
     """
-    
+    Computes the forward attention mechanism using flash attention 2.
     
     """
     
@@ -121,8 +125,8 @@ def fa2_forward(
     o_tensor = torch.empty((N, d), dtype=dtype, device=device)
     L_tensor = torch.empty((N,), dtype=dtype, device=device)
     
-    BS_row = 4
-    BS_col = 4
+    BS_row = 16
+    BS_col = 16
     nb_tiles_row = ceil(N / BS_row)
     nb_tiles_col = ceil(N / BS_col)
     
@@ -136,7 +140,7 @@ def fa2_forward(
         N, N, hidden_dimension, d, d_sqrt,
         stride_q_row, stride_k_row, 
         stride_v_row, 
-        tl.float32,
+        output_dtype,
         nb_tiles_col, BS_row, BS_col
     )
     
@@ -147,7 +151,7 @@ def fa2_forward(
 
 if __name__ == "__main__":
     N = 10
-    d = 6
+    d = 50
     
     dtype = torch.float32
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -156,15 +160,18 @@ if __name__ == "__main__":
     k_tensor = torch.randn((N, d), dtype=dtype, device=device)
     v_tensor = torch.randn((N, d), dtype=dtype, device=device)
     
-    o_tensor, L_tensor = fa2_forward(q_tensor, k_tensor, v_tensor)
+    o_tensor, L_tensor = fa2_forward(q_tensor, k_tensor, v_tensor, torch_to_triton_dtypes[dtype])
     
     o_torch = F.scaled_dot_product_attention(q_tensor, k_tensor, v_tensor)
     
     # s_ref, p_ref, o_ref = ref_fa2_forward(q_tensor, k_tensor, v_tensor)
     
-    # o_ref2, _ = ref2_fa2_forward(q_tensor, k_tensor, v_tensor)
+    o_ref2, _ = ref2_fa2_forward(q_tensor, k_tensor, v_tensor)
     
-    torch.testing.assert_close(o_torch, o_tensor, atol=1e-3, rtol=1e-3)
+    # print(f"The output tensor calculated by pytorch is equal to {o_torch}")
+    # print(f"The output tensor calculated by the ref is equal to {o_ref2}")
+    
+    torch.testing.assert_close(o_ref2, o_torch, atol=1e-3, rtol=1e-3)
     
     # torch.testing.assert_close(o)
     

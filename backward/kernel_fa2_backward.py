@@ -1,6 +1,3 @@
-import os
-os.environ["TRITON_INTERPRET"] = "1"
-
 import triton
 import triton.language as tl
 import torch
@@ -15,7 +12,7 @@ def _kernel_D_fa2(
     size_n, d, size_d : tl.constexpr,
     stride_o_row,
     stride_do_row,
-    output_dtype,
+    output_dtype : tl.constexpr,
     BS_row : tl.constexpr
 ):
     """
@@ -48,7 +45,6 @@ def _kernel_D_fa2(
     
     tl.store(D_ptr + offset_row, D_mat, mask=mask_row)
     
-
 
 
 @triton.jit
@@ -144,8 +140,8 @@ def fa2_backward(
     
 
 if __name__ == "__main__":
-    N = 4
-    d = 4
+    N = 6
+    d = 100
     
     dtype = torch.float32
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -159,8 +155,8 @@ if __name__ == "__main__":
     L_tensor = torch.randn((N,), dtype=dtype, device=device)
     
     D_tensor = fa2_backward(q_tensor, k_tensor, v_tensor, o_tensor, do_tensor, L_tensor)
-    
     D_ref = ref_D_tensor(o_tensor, do_tensor, dtype)
     
-    print(f"The tensor D_tensor calculated by the kernel is equal to : \n {D_tensor}")
-    print(f"The tensor D_ref calculated by pytorch is equal to : \n {D_ref}")
+    torch.testing.assert_close(D_tensor, D_ref, atol=1e-5, rtol=1e-5)
+    
+    
