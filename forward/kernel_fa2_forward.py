@@ -3,7 +3,6 @@ import triton.language as tl
 import torch
 import torch.nn.functional as F
 
-from forward.ref_fa2_forward import ref_fa2_forward
 from forward.ref2_fa2_forward import ref2_fa2_forward
 
 from math import ceil, sqrt
@@ -153,7 +152,7 @@ if __name__ == "__main__":
     N = 10
     d = 50
     
-    dtype = torch.float32
+    dtype = torch.bfloat16
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     
     q_tensor = torch.randn((N, d), dtype=dtype, device=device)
@@ -171,7 +170,7 @@ if __name__ == "__main__":
     # print(f"The output tensor calculated by pytorch is equal to {o_torch}")
     # print(f"The output tensor calculated by the ref is equal to {o_ref2}")
     
-    torch.testing.assert_close(o_ref2, o_torch, atol=1e-3, rtol=1e-3)
+    torch.testing.assert_close(o_ref2, o_tensor, atol=1e-3, rtol=1e-3)
     
     # torch.testing.assert_close(o)
     

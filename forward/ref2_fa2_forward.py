@@ -11,8 +11,8 @@ def ref2_fa2_forward(
     
     """
     
-    BS_row = 4
-    BS_col = 4
+    BS_row = 16
+    BS_col = 16
     
     N, d = q_tensor.shape
     dtype = q_tensor.dtype
@@ -32,13 +32,13 @@ def ref2_fa2_forward(
         if i == nb_tiles_row:
             end_i = q_tensor.shape[0]
         
-        q = q_tensor[start_i : end_i]
+        q = q_tensor[start_i : end_i].to(dtype=torch.float32)
         
         nb_elems_interval = end_i - start_i
         
-        o_row = torch.zeros((nb_elems_interval, d), dtype=dtype, device=device)
-        l_row = torch.zeros((nb_elems_interval,), dtype=dtype, device=device)
-        m_row = torch.full((nb_elems_interval,), fill_value=-float("inf"), dtype=dtype, device=device)
+        o_row = torch.zeros((nb_elems_interval, d), dtype=torch.float32, device=device)
+        l_row = torch.zeros((nb_elems_interval,), dtype=torch.float32, device=device)
+        m_row = torch.full((nb_elems_interval,), fill_value=-float("inf"), dtype=torch.float32, device=device)
 
         for j in range(1, nb_tiles_col+1):
             
@@ -48,15 +48,16 @@ def ref2_fa2_forward(
             if j == nb_tiles_col:
                 end_j = k_tensor.shape[0]
 
-            k = k_tensor[start_j : end_j]
-            v = v_tensor[start_j : end_j]
+            k = k_tensor[start_j : end_j].to(dtype=torch.float32)
+            v = v_tensor[start_j : end_j].to(dtype=torch.float32)
+            
+            former_m_row = m_row
 
             k_t = torch.transpose(k, 0, 1)
             s = q @ k_t / sqrt(d)
 
             rowmax_s = torch.max(s, dim=1)
-            former_m_row = m_row
-
+            
             m_row = torch.maximum(m_row,rowmax_s.values)
             
             p = torch.exp(s - m_row[:, None])
@@ -71,8 +72,8 @@ def ref2_fa2_forward(
         o_row = o_row / l_row[:, None]
         L_row = m_row + torch.log(l_row)
         
-        o_tensor[(i-1)*BS_row : i*BS_row] = o_row
-        L_tensor[(i-1)*BS_row : i*BS_row] = L_row
+        o_tensor[(i-1)*BS_row : i*BS_row] = o_row.to(dtype=dtype)
+        L_tensor[(i-1)*BS_row : i*BS_row] = L_row.to(dtype=dtype)
     
     return o_tensor, L_tensor
 

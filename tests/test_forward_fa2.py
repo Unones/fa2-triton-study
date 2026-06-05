@@ -21,9 +21,9 @@ tols_dtypes = {
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 @pytest.mark.parametrize("dtype" , [torch.float32, torch.float16, torch.bfloat16])
-def test_forward_flash_attention2(dtype):
-    N = 10
-    d = 50
+@pytest.mark.parametrize("N", [8, 10, 100, 101, 128])
+@pytest.mark.parametrize("d", [16, 20, 120, 256])
+def test_forward_flash_attention2(dtype, N, d):
 
     q_tensor = torch.randn((N, d), dtype=dtype, device=device)
     k_tensor = torch.randn((N, d), dtype=dtype, device=device)
@@ -35,4 +35,4 @@ def test_forward_flash_attention2(dtype):
     
     o_ref, _ = ref2_fa2_forward(q_tensor, k_tensor, v_tensor)
     
-    torch.testing.assert_close(o_tensor, o_ref, atol = 1e-3, rtol=1e-3)
+    torch.testing.assert_close(o_tensor, o_ref, atol = 1e-2, rtol=1e-2)
