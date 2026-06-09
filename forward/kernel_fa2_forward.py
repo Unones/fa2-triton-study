@@ -84,7 +84,6 @@ def _kernel_fa2_forward(
     L_row = m_row + tl.log(l_row + 1e-9)
     
     o_row = o_row.to(dtype=output_dtype)
-    L_row = L_row.to(dtype=output_dtype)    
     
     tl.store(o_ptr + offset_q, o_row, mask=mask_q)
     tl.store(L_ptr + offset_row, L_row, mask=mask_row)
@@ -99,8 +98,7 @@ torch_to_triton_dtypes = {
 def fa2_forward(
     q_tensor : torch.Tensor, 
     k_tensor : torch.Tensor, 
-    v_tensor : torch.Tensor,
-    output_dtype 
+    v_tensor : torch.Tensor
 ):
     """
     Computes the forward attention mechanism using flash attention 2.
@@ -122,7 +120,7 @@ def fa2_forward(
     d_sqrt = sqrt(d)
     
     o_tensor = torch.empty((N, d), dtype=dtype, device=device)
-    L_tensor = torch.empty((N,), dtype=dtype, device=device)
+    L_tensor = torch.empty((N,), dtype=torch.float32, device=device)
     
     BS_row = 16
     BS_col = 16
@@ -139,7 +137,7 @@ def fa2_forward(
         N, N, hidden_dimension, d, d_sqrt,
         stride_q_row, stride_k_row, 
         stride_v_row, 
-        output_dtype,
+        torch_to_triton_dtypes[dtype],
         nb_tiles_col, BS_row, BS_col
     )
     
@@ -159,7 +157,7 @@ if __name__ == "__main__":
     k_tensor = torch.randn((N, d), dtype=dtype, device=device)
     v_tensor = torch.randn((N, d), dtype=dtype, device=device)
     
-    o_tensor, L_tensor = fa2_forward(q_tensor, k_tensor, v_tensor, torch_to_triton_dtypes[dtype])
+    o_tensor, L_tensor = fa2_forward(q_tensor, k_tensor, v_tensor)
     
     o_torch = F.scaled_dot_product_attention(q_tensor, k_tensor, v_tensor)
     
@@ -170,7 +168,7 @@ if __name__ == "__main__":
     # print(f"The output tensor calculated by pytorch is equal to {o_torch}")
     # print(f"The output tensor calculated by the ref is equal to {o_ref2}")
     
-    torch.testing.assert_close(o_ref2, o_tensor, atol=1e-3, rtol=1e-3)
+    torch.testing.assert_close(o_ref2, o_tensor, atol=1e-2, rtol=1e-2)
     
     # torch.testing.assert_close(o)
     

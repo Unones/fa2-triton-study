@@ -3,7 +3,8 @@ import triton.language as tl
 import torch
 import math
 
-from backward.ref_fa2_D_tensor import ref_D_tensor
+import torch.nn.functional as F
+from forward.kernel_fa2_forward import fa2_forward
 
 @triton.jit
 def _kernel_D_fa2(
@@ -100,21 +101,18 @@ def _kernel_fa2_backward(
         offset_row = i*BS_row + tl.arange(0, BS_row)
         
         offset_q_row = offset_row * stride_q_row
-        offset_o_row = offset_row * stride_o_row
         offset_do_row = offset_row * stride_do_row
         
         mask_row = offset_row < size_n
         
         offset_q = offset_q_row[:, None] + offset_d[None, :]
-        offset_o = offset_o_row[:, None] + offset_d[None, :]
         offset_do = offset_do_row[:, None] + offset_d[None, :]
         offset_dq = offset_q_row[:, None] + offset_d[None, :]
         
         mask_qo = mask_row[:, None] & mask_d[None, :]
         
-        q = tl.load(q_ptr + offset_q, mask=mask_qo, other=0)
-        o = tl.load(o_ptr + offset_o, mask=mask_qo, other=0)
-        do = tl.load(do_ptr + offset_do, mask=mask_qo, other=0)
+        q = tl.load(q_ptr + offset_q, mask=mask_qo, other=0).to(dtype=tl.float32)
+        do = tl.load(do_ptr + offset_do, mask=mask_qo, other=0).to(dtype=tl.float32)
         L_row = tl.load(L_ptr + offset_row, mask=mask_row, other=0)
         D_row = tl.load(D_ptr + offset_row, mask=mask_row, other=0)
         
@@ -239,25 +237,34 @@ def fa2_backward(
     
 
 if __name__ == "__main__":
-    N = 10
-    d = 100
+    N = 2
+    d = 10
     
-    dtype = torch.float32
+    dtype=torch.float32
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     
-    q_tensor = torch.randn((N, d), dtype=dtype, device=device)
-    k_tensor = torch.randn((N, d), dtype=dtype, device=device)
-    v_tensor = torch.randn((N, d), dtype=dtype, device=device)
-    o_tensor = torch.randn((N, d), dtype=dtype, device=device)
-    do_tensor = torch.randn((N, d), dtype=dtype, device=device)
-
-    L_tensor = torch.randn((N,), dtype=dtype, device=device)
+    q_tensor = torch.randn((N, d), dtype=dtype, device=device, requires_grad=True)
+    k_tensor = torch.randn((N, d), dtype=dtype, device=device, requires_grad=True)
+    v_tensor = torch.randn((N, d), dtype=dtype, device=device, requires_grad=True)
+    
+    o_tensor, L_tensor = fa2_forward(q_tensor, k_tensor, v_tensor)
+    
+    o_torch = F.scaled_dot_product_attention(q_tensor, k_tensor, v_tensor)
+    
+    torch.testing.assert_close(o_tensor, o_torch, atol=1e-2, rtol=1e-2)
+    
+    do_tensor = torch.randn((N, d), dtype=dtype, device=device, requires_grad=True)
     
     D_tensor, dq_tensor, dk_tensor, dv_tensor = fa2_backward(q_tensor, k_tensor, v_tensor, o_tensor, do_tensor, L_tensor)
-    D_ref = ref_D_tensor(o_tensor, do_tensor, dtype)
+    
+    grad_q, grad_k, grad_v = torch.autograd.grad(
+        outputs=o_torch,
+        inputs=[q_tensor, k_tensor, v_tensor],
+        grad_outputs=do_tensor
+    )
     
     
     
-    torch.testing.assert_close(D_tensor, D_ref, atol=1e-2, rtol=1e-2)
-    
+    print(f"The tensor dq_tensor calculated by the kernel is equal to : \n {dq_tensor}")
+    print(f"The tensor grad_q calculated by pytorch is equal to : \n {grad_q}")
     

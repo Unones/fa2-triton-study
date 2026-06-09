@@ -29,7 +29,7 @@ def test_forward_flash_attention2(dtype, N, d):
     k_tensor = torch.randn((N, d), dtype=dtype, device=device)
     v_tensor = torch.randn((N, d), dtype=dtype, device=device)
     
-    o_tensor, _ = fa2_forward(q_tensor, k_tensor, v_tensor, torch_to_triton_dtypes[dtype])
+    o_tensor, _ = fa2_forward(q_tensor, k_tensor, v_tensor)
     
     o_torch = F.scaled_dot_product_attention(q_tensor, k_tensor, v_tensor)
     
