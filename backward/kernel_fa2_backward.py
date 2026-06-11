@@ -1,3 +1,6 @@
+import os
+os.environ["TRITON_INTERPRET"] = "1"
+
 import triton
 import triton.language as tl
 import torch
@@ -5,6 +8,7 @@ import math
 
 import torch.nn.functional as F
 from forward.kernel_fa2_forward import fa2_forward
+from backward.ref_fa2_D_tensor import ref_D_tensor
 
 @triton.jit
 def _kernel_D_fa2(
@@ -63,7 +67,7 @@ def _kernel_fa2_backward(
     size_n, d, sqrt_d, 
     size_d : tl.constexpr,
     output_dtype : tl.constexpr,
-    nb_blocks_row,
+    nb_tiles_row,
     BS_row : tl.constexpr,
     BS_col : tl.constexpr
 ):
@@ -81,10 +85,16 @@ def _kernel_fa2_backward(
     offset_k_col = offset_col * stride_k_col
     offset_v_col = offset_col * stride_v_col
     
+    # tl.device_print("offset_col is equal to : \n", offset_col)
+    
     mask_col = offset_col < size_n
+    
+    # tl.device_print("mask_col is equal to : \n", mask_col)
     
     offset_d = tl.arange(0, size_d)
     mask_d = offset_d < d
+    
+    # tl.device_print("offset_d is equal to : \n", offset_d)
     
     offset_k = offset_k_col[:, None] + offset_d[None, :]
     offset_v = offset_v_col[:, None] + offset_d[None, :]
@@ -97,11 +107,19 @@ def _kernel_fa2_backward(
     dk = tl.zeros((BS_col, size_d), dtype=tl.float32)
     dv = tl.zeros((BS_col, size_d), dtype=tl.float32)
     
-    for i in range(1, nb_blocks_row +1):
+    # tl.device_print("mask_kv is equal to ; \n", mask_kv)
+    # tl.device_print("The loaded part of k is equal to : \n", k)
+    # tl.device_print("The loaded part of v is equal to : \n", v)
+    
+    for i in range(nb_tiles_row):
         offset_row = i*BS_row + tl.arange(0, BS_row)
         
         offset_q_row = offset_row * stride_q_row
         offset_do_row = offset_row * stride_do_row
+        
+        tl.device_print("offset_row is equal to : \n", offset_row)
+        tl.device_print("The variable nb_tiles_row is equal to : \n", nb_tiles_row)
+        tl.device_print("The variable size_n is equal to : \n", size_n)
         
         mask_row = offset_row < size_n
         
@@ -115,6 +133,15 @@ def _kernel_fa2_backward(
         do = tl.load(do_ptr + offset_do, mask=mask_qo, other=0).to(dtype=tl.float32)
         L_row = tl.load(L_ptr + offset_row, mask=mask_row, other=0)
         D_row = tl.load(D_ptr + offset_row, mask=mask_row, other=0)
+        
+        tl.device_print("The mask_row is equal to :\n", mask_row)
+        tl.device_print("The mask_d is equal to : \n", mask_d)
+        tl.device_print("The mask_qo is equal to : \n", mask_qo)
+        
+        tl.device_print("The loaded block of q is equal to : \n", q)
+        # tl.device_print("The loaded block of do is equal to : \n", do)
+        # tl.device_print("The loaded block of L_row is equal to : \n", L_row)
+        # tl.device_print("The laoded block of D_row is equal to : \n", D_row)
         
         k_t = tl.trans(k)
         s = tl.dot(q, k_t) / sqrt_d
@@ -131,11 +158,13 @@ def _kernel_fa2_backward(
         dp = tl.dot(do, v_t)
         
         ds = p * (dp - D_row[:, None])
-        dq = tl.dot(ds, k)
+        dq = tl.dot(ds, k) / sqrt_d
         dq = dq.to(dtype=output_dtype)
+        
+        # tl.device_print("The calculated dq block is equal to : \n",dq)
         tl.atomic_add(dq_ptr + offset_dq, dq)
         
-        dk += tl.dot(ds, q)
+        dk += tl.dot(ds, q) / sqrt_d
     
     dk = dk.to(dtype=output_dtype)
     dv = dv.to(dtype=output_dtype)
@@ -177,18 +206,18 @@ def fa2_backward(
     do_tensor = do_tensor.contiguous()
     
     stride_o_row = o_tensor.stride(0)
-    stride_do_row = o_tensor.stride(0)
+    stride_do_row = do_tensor.stride(0)
     stride_q_row = q_tensor.stride(0)
     stride_k_col = k_tensor.stride(0)
     stride_v_col = v_tensor.stride(0)
     
     D_tensor = torch.empty(size=(N,), dtype=dtype, device=device)
-    dq_tensor = torch.empty(size=(N, d), dtype=dtype, device=device)
+    dq_tensor = torch.zeros(size=(N, d), dtype=dtype, device=device)
     dk_tensor = torch.empty(size=(N, d), dtype=dtype, device=device)
     dv_tensor = torch.empty(size=(N, d), dtype=dtype, device=device)
     
-    BS_row = 16
-    BS_col = 16
+    BS_row = 1
+    BS_col = 1
     
     nb_tiles_row = math.ceil(N / BS_row)
     nb_tiles_col = math.ceil(N / BS_col)
@@ -247,6 +276,10 @@ if __name__ == "__main__":
     k_tensor = torch.randn((N, d), dtype=dtype, device=device, requires_grad=True)
     v_tensor = torch.randn((N, d), dtype=dtype, device=device, requires_grad=True)
     
+    # print(f"The initialized k_tensor is equal to : \n {k_tensor}")
+    # print(f"The initialized v_tensor is equal to : \n {v_tensor}")
+    print(f"The initialized q_tensor is equal to : \n {q_tensor}")
+    
     o_tensor, L_tensor = fa2_forward(q_tensor, k_tensor, v_tensor)
     
     o_torch = F.scaled_dot_product_attention(q_tensor, k_tensor, v_tensor)
@@ -263,8 +296,21 @@ if __name__ == "__main__":
         grad_outputs=do_tensor
     )
     
+    D_ref = ref_D_tensor(o_tensor, do_tensor, output_dtype=dtype)
+    D_ref = D_ref.detach()
+    
+    torch.testing.assert_close(D_ref, D_tensor, atol=1e-2, rtol=1e-2)
+    
+    # print(f"The calculated D_tensor by the kernel is equal to : {D_tensor}")
+    # print(f"The reference D_ref is equal to : {D_ref}")
+    
     
     
     print(f"The tensor dq_tensor calculated by the kernel is equal to : \n {dq_tensor}")
     print(f"The tensor grad_q calculated by pytorch is equal to : \n {grad_q}")
     
+    print(f"The tensor dk_tensor calculated by the kernel is equal to : \n {dk_tensor}")
+    print(f"The tensor grad_k calculated by pytorch is equal to : \n {grad_k}")
+    
+    print(f"The tensor dv_tensor calculated by the kernel is equal to : \n {dv_tensor}")
+    print(f"The tensor grad_v calculated by pytorch is equal to : \n {grad_v}")
