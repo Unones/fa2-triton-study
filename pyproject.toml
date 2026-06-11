@@ -10,3 +10,6 @@ dependencies = [
     "torch>=2.12.0",
     "triton>=3.7.0",
 ]
+
+[tool.setuptools]
+packages = ["forward", "backward"]
