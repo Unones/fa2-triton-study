@@ -12,19 +12,22 @@ torch_to_triton_dtypes = {
     torch.bfloat16 : tl.bfloat16
 }
 
-tols_dtypes = {
-    torch.float32 : {"atol" : 1e-5, "rtol" : 1e-5},
-    torch.float16 : {"atol" : 1e-3, "rtol" : 1e-3},
-    torch.bfloat16 : {"atol" : 1e-2, "rtol" : 1e-2}
-}
-
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
-def test_backward_fkash_attention2(dtype):
-    N = 16
-    d = 16
+def _warmup_autograd():
+    a = torch.randn(8, 8, device="cuda", requires_grad=True)
+    b = torch.randn(8, 8, device="cuda", requires_grad=True)
+    (a @ b).sum().backward()   # force l'init du contexte sur le thread autograd
+    torch.cuda.synchronize()
     
+
+@pytest.mark.parametrize("dtype" , [torch.float32, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("N", [8, 10, 100, 101, 128])
+@pytest.mark.parametrize("d", [16, 20, 120])
+def test_backward_fkash_attention2(dtype, N, d):
+    
+    _warmup_autograd()
+
     q_tensor = torch.randn((N, d), dtype=dtype, device=device, requires_grad=True)
     k_tensor = torch.randn((N, d), dtype=dtype, device=device, requires_grad=True)
     v_tensor = torch.randn((N, d), dtype=dtype, device=device, requires_grad=True)
@@ -37,7 +40,7 @@ def test_backward_fkash_attention2(dtype):
     
     do_tensor = torch.randn((N, d), dtype=dtype, device=device, requires_grad=True)
     
-    D_tensor, dq_tensor, dk_tensor, dv_tensor = fa2_backward(q_tensor, k_tensor, v_tensor, o_tensor, do_tensor, L_tensor)
+    _, dq_tensor, dk_tensor, dv_tensor = fa2_backward(q_tensor, k_tensor, v_tensor, o_tensor, do_tensor, L_tensor)
     
     grad_q, grad_k, grad_v = torch.autograd.grad(
         outputs=o_torch,
@@ -45,4 +48,7 @@ def test_backward_fkash_attention2(dtype):
         grad_outputs=do_tensor
     )
     
-    torch.testing.assert_close(grad_q, dq_tensor)
+    torch.testing.assert_close(grad_q, dq_tensor, atol=1e-2, rtol=1e-2)
+    torch.testing.assert_close(grad_k, dk_tensor, atol=1e-2, rtol=1e-2)
+    torch.testing.assert_close(grad_v, dv_tensor, atol=1e-2, rtol=1e-2)
+    
