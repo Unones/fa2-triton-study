@@ -1,3 +1,5 @@
+# pyright : reportOperatorIssue = false
+
 import torch
 import triton
 import torch.nn.functional as F
@@ -48,7 +50,7 @@ def benchmark_forward():
         bytes_transferred = math.ceil((N/64)) * (4*64*d + 4*N*d)
         
         brandwidth_kernel = (bytes_transferred / (ms_kernel )) * 1e-6
-        brandwidth_torch = (bytes_transferred / (ms_torch )) * 1e-6
+        brandwidth_torch = (bytes_transferred / (ms_torch )) * 1e-6 
         
         dict["size_N"].append(N)
         dict["kernel"].append(brandwidth_kernel)

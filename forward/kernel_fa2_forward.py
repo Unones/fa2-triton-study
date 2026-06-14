@@ -1,3 +1,6 @@
+import os
+os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
+
 import triton
 import triton.language as tl
 import torch
@@ -5,6 +8,17 @@ import torch.nn.functional as F
 
 from math import ceil, sqrt
 
+@triton.autotune(configs=[
+    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=3),
+    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=4),
+    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 64}, num_stages=4),
+    triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=4),
+    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 128}, num_stages=2),
+    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 128}, num_stages=3),
+
+],
+    key=["size_row", "size_col"]
+)
 @triton.jit
 def _kernel_fa2_forward(
     q_ptr, k_ptr, v_ptr, o_ptr, L_ptr,
@@ -12,7 +26,6 @@ def _kernel_fa2_forward(
     stride_q_row, stride_k_col,
     stride_v_col,
     output_dtype : tl.constexpr,
-    nb_tiles_col : tl.constexpr,
     BS_row : tl.constexpr,
     BS_col : tl.constexpr,
     
@@ -39,6 +52,8 @@ def _kernel_fa2_forward(
     o_row = tl.zeros((BS_row, hidden_dimension), dtype=tl.float32)
     l_row = tl.zeros((BS_row,), dtype=tl.float32)
     m_row = tl.full((BS_row,), float("-inf"), dtype=tl.float32)
+    
+    nb_tiles_col = tl.cdiv(size_col, BS_col)
 
     for j in range(nb_tiles_col):
         offset_col = j * BS_col + tl.arange(0, BS_col)
@@ -119,15 +134,10 @@ def fa2_forward(
     
     o_tensor = torch.empty((N, d), dtype=dtype, device=device)
     L_tensor = torch.empty((N,), dtype=torch.float32, device=device)
-    
-    BS_row = 64
-    BS_col = 64
-    nb_tiles_row = ceil(N / BS_row)
-    nb_tiles_col = ceil(N / BS_col)
-    
+
     hidden_dimension = triton.next_power_of_2(d)
     
-    grid = (nb_tiles_row, )
+    grid = lambda META : (ceil(N / META["BS_row"]), )
     
     args = (
         q_tensor, k_tensor, v_tensor,
@@ -135,8 +145,7 @@ def fa2_forward(
         N, N, hidden_dimension, d, d_sqrt,
         stride_q_row, stride_k_row, 
         stride_v_row, 
-        torch_to_triton_dtypes[dtype],
-        nb_tiles_col, BS_row, BS_col
+        torch_to_triton_dtypes[dtype]
     )
     
     _kernel_fa2_forward[grid](*args)        #type:ignore
@@ -145,7 +154,7 @@ def fa2_forward(
     
 
 if __name__ == "__main__":
-    N = 128
+    N = 2048
     d = 64
     
     dtype = torch.bfloat16
