@@ -3,8 +3,6 @@ import triton.language as tl
 import torch
 import torch.nn.functional as F
 
-from forward.ref2_fa2_forward import ref2_fa2_forward
-
 from math import ceil, sqrt
 
 @triton.jit
@@ -122,8 +120,8 @@ def fa2_forward(
     o_tensor = torch.empty((N, d), dtype=dtype, device=device)
     L_tensor = torch.empty((N,), dtype=torch.float32, device=device)
     
-    BS_row = 16
-    BS_col = 16
+    BS_row = 64
+    BS_col = 64
     nb_tiles_row = ceil(N / BS_row)
     nb_tiles_col = ceil(N / BS_col)
     
@@ -147,8 +145,8 @@ def fa2_forward(
     
 
 if __name__ == "__main__":
-    N = 10
-    d = 50
+    N = 128
+    d = 64
     
     dtype = torch.bfloat16
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -160,24 +158,6 @@ if __name__ == "__main__":
     o_tensor, L_tensor = fa2_forward(q_tensor, k_tensor, v_tensor)
     
     o_torch = F.scaled_dot_product_attention(q_tensor, k_tensor, v_tensor)
-    
-    # s_ref, p_ref, o_ref = ref_fa2_forward(q_tensor, k_tensor, v_tensor)
-    
-    o_ref2, _ = ref2_fa2_forward(q_tensor, k_tensor, v_tensor)
-    
-    # print(f"The output tensor calculated by pytorch is equal to {o_torch}")
-    # print(f"The output tensor calculated by the ref is equal to {o_ref2}")
-    
-    torch.testing.assert_close(o_ref2, o_tensor, atol=1e-2, rtol=1e-2)
-    
-    # torch.testing.assert_close(o)
-    
-    # print(p_ref)
-    
-    # print(o_torch)
-    # print(o_tensor)
-    # print(o_ref)
-    # print(o_ref2)
-    
-    
+
+    torch.testing.assert_close(o_torch, o_tensor, atol=1e-2, rtol=1e-2)
     

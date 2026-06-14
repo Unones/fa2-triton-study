@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = "==3.13.13"
 dependencies = [
+    "matplotlib>=3.11.0",
     "numpy>=2.4.6",
     "pytest>=9.0.3",
     "torch>=2.12.0",
