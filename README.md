@@ -2,134 +2,130 @@
 
 Implementation of Flash Attention 2 in Triton kernels to better understand how it works.
 
-## I/ Les résultats
+## I/ Results
 
-Comparaison entre l'implémentation Flash Attention 2 de PyTorch (`F.scaled_dot_product_attention`)
-et mon kernel Triton.
+Comparison between PyTorch's Flash Attention 2 implementation (`F.scaled_dot_product_attention`)
+and my Triton kernel.
 
-- **Matériel :** NVIDIA RTX 5070 Ti (Blackwell, 70 SM, bande passante HBM théorique 896 GB/s)
-- **Précision :** entrées BF16
-- **Dimensions :** Q, K, V de forme `(N, d)` avec `d = 64`, soit `(1, 1, N, d)` au format FA2
-- **Masquage :** aucun (cas non causal) — toute la matrice S contribue au calcul
+- **Hardware:** NVIDIA RTX 5070 Ti (Blackwell, 70 SMs, theoretical HBM bandwidth 896 GB/s)
+- **Precision:** BF16 inputs
+- **Dimensions:** Q, K, V of shape `(N, d)` with `d = 64`, i.e. `(1, 1, N, d)` in FA2 layout
+- **Masking:** none (non-causal) - the full S matrix contributes to the computation
 
-> ⚠️ **Limite du benchmark.** La forme `(1, 1, N, d)` n'a **qu'une seule tête**. Elle n'est pas
-> représentative d'une charge réelle (où `batch × têtes` vaut des dizaines à des milliers) : elle
-> sous-remplit le GPU et force PyTorch dans une stratégie *split-KV* (voir §D). Un benchmark
-> multi-têtes est prévu (§E).
+> ⚠️ **Benchmark caveat.** The shape `(1, 1, N, d)` has **a single head**. It is not representative of
+> a real workload (where `batch × heads` is in the tens to thousands): it underfills the GPU and forces
+> PyTorch into a *split-KV* strategy (see §D). A multi-head benchmark is planned (§E).
 
 <img src="benchmark/figures/forward.png" alt="Comparison FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
 
-### A) Description du graphe
+### A) Reading the plot
 
-Aux petits `N`, mon kernel devance PyTorch — probablement parce que PyTorch emprunte ici un chemin
-*split-KV* en deux kernels (calcul partiel + recombinaison, voir §D) dont l'overhead n'est pas amorti
-quand il y a peu de travail, là où mon kernel autotuné tient en un seul lancement.
+At small `N`, my kernel edges out PyTorch - most likely because PyTorch takes a *split-KV* path here in
+two kernels (partial compute + recombination, see §D) whose overhead isn't amortized when there's
+little work, whereas my autotuned kernel runs in a single launch.
 
-À partir de `N ≈ 1024`, PyTorch repasse devant : mon kernel n'est qu'une implémentation directe de
-l'algorithme de Tri Dao, sans optimisation supplémentaire, et il laisse de la performance sur la table
-(voir le profiling §D).
+From `N ≈ 1024` onward, PyTorch pulls ahead: my kernel is only a direct implementation of Tri Dao's
+algorithm, with no further optimization, and leaves performance on the table (see the profiling in §D).
 
-**À propos de l'axe « bande passante ».** La courbe trace une bande passante *algorithmique* : octets
-*modélisés* (formule §B) ÷ temps mesuré — **pas** le trafic DRAM réel, que le matériel plafonne à
-896 GB/s. C'est pourquoi la courbe PyTorch peut « dépasser » ce plafond : cela signifie simplement que
-PyTorch déplace *moins* d'octets réels en DRAM que ma formule ne le suppose (ses tuiles K/V sont
-resservies par le cache L2). Le profiling le confirme : sur mon propre kernel, le débit DRAM mesuré
-n'est que de **1,25 %** (§D) — à ces tailles, Q/K/V tiennent quasiment en cache et ne touchent presque
-jamais la HBM. La métrique « bande passante » est donc un indicateur de débit, pas une mesure de
-saturation mémoire.
+**About the "bandwidth" axis.** The curve plots an *algorithmic* bandwidth: *modeled* bytes
+(formula §B) ÷ measured time - **not** the real DRAM traffic, which the hardware caps at 896 GB/s.
+This is why the PyTorch curve can "exceed" that ceiling: it simply means PyTorch moves *fewer* real
+DRAM bytes than my formula assumes (its K/V tiles are served back from the L2 cache). Profiling
+confirms it: on my own kernel, measured DRAM throughput is only **1.25%** (§D) - at these sizes,
+Q/K/V essentially fit in cache and almost never hit HBM. The "bandwidth" metric is therefore a
+throughput indicator, not a measure of memory saturation.
 
-### B) Calcul des octets transférés
+### B) Counting bytes transferred
 
-Notations :
-- `B_r` : taille de bloc suivant les lignes (requêtes)
-- `d` : hidden dimension commune à Q, K, V
-- `N` : nombre de lignes de chaque matrice (Q, K, V)
+Notation:
+- `B_r`: block size along the rows (queries)
+- `d`: hidden dimension shared by Q, K, V
+- `N`: number of rows of each matrix (Q, K, V)
 
-Octets transférés pour un *program* (un bloc de requêtes), en BF16 (2 octets/élément) :
-- load `Q_i` (HBM) : `2·B_r·d`
-- load tous les `K_j` (HBM) : `2·N·d`
-- load tous les `V_j` (HBM) : `2·N·d`
-- store `O_i` (HBM) : `2·B_r·d`
-- store `L_i` (HBM) : `2·B_r`
+Bytes transferred for one *program* (one query block), in BF16 (2 bytes/element):
+- load `Q_i` (HBM): `2·B_r·d`
+- load all `K_j` (HBM): `2·N·d`
+- load all `V_j` (HBM): `2·N·d`
+- store `O_i` (HBM): `2·B_r·d`
+- store `L_i` (HBM): `2·B_r`
 
-**Total : `4·B_r·d + 4·N·d + 2·B_r`.**
+**Total: `4·B_r·d + 4·N·d + 2·B_r`.**
 
-### C) Memory-bound ou compute-bound : le roofline idéalisé
+### C) Memory-bound or compute-bound: the idealized roofline
 
-L'intensité arithmétique `IA = FLOPs / octets` situe le kernel par rapport au point d'inflexion du
-roofline.
+Arithmetic intensity `AI = FLOPs / bytes` places the kernel relative to the roofline's ridge point.
 
-**Point d'inflexion.** Les opérations dominantes sont les deux matmuls (tensor cores). Pour une
-attention BF16 standard (entrées BF16, accumulation FP32 — la configuration FA2 usuelle), le débit
-tensoriel de la carte est de 87,9 TFLOP/s, d'où :
+**Ridge point.** The dominant operations are the two matmuls (tensor cores). For a standard BF16
+attention (BF16 inputs, FP32 accumulation - the usual FA2 configuration), the card's tensor throughput
+is 87.9 TFLOP/s, hence:
 
-> point d'inflexion = 87,9 TFLOP/s ÷ 896 GB/s ≈ **98 FLOPs/octet**
+> ridge point = 87.9 TFLOP/s ÷ 896 GB/s ≈ **98 FLOPs/byte**
 
-(En accumulation FP16 le débit serait ~176 TFLOP/s, soit ~196 FLOPs/octet ; ce n'est pas le régime
-visé ici.)
+(With FP16 accumulation the throughput would be ~176 TFLOP/s, i.e. ~196 FLOPs/byte; that's not the
+regime targeted here.)
 
-**FLOPs du kernel.** Seuls les deux matmuls comptent ; le reste (exp, rescaling de l'online softmax,
-arithmétique d'indices) est en `O(B_r·N)`, négligeable devant `O(B_r·N·d)` dès que `d ≫ 1` :
-- `2·N·B_r·d` pour `S = Q·Kᵀ`
-- `2·N·B_r·d` pour `O += P·V`
-- **total : `FLOPs = 4·N·B_r·d`**
+**Kernel FLOPs.** Only the two matmuls matter; the rest (exp, online-softmax rescaling, index
+arithmetic) is `O(B_r·N)`, negligible against `O(B_r·N·d)` as soon as `d ≫ 1`:
+- `2·N·B_r·d` for `S = Q·Kᵀ`
+- `2·N·B_r·d` for `O += P·V`
+- **total: `FLOPs = 4·N·B_r·d`**
 
-**Octets** (en négligeant le terme `2·B_r`) : `4·B_r·d + 4·N·d = 4·d·(B_r + N)`.
+**Bytes** (dropping the `2·B_r` term): `4·B_r·d + 4·N·d = 4·d·(B_r + N)`.
 
-D'où :
+Hence:
 
-> `IA = 4·N·B_r·d / (4·d·(B_r + N)) = (B_r·N) / (B_r + N)`
+> `AI = 4·N·B_r·d / (4·d·(B_r + N)) = (B_r·N) / (B_r + N)`
 
-Application numérique (`B_r = 64`, `N = 4096`, `d = 64`) : **`IA ≈ 63 FLOPs/octet`**.
+Numerical application (`B_r = 64`, `N = 4096`, `d = 64`): **`AI ≈ 63 FLOPs/byte`**.
 
-Comme `63 < 98`, ce **modèle idéalisé** prédit un régime memory-bound — *à condition que le kernel
-sature la bande passante*. Le profiling (§D) montre que ce n'est pas le cas : le kernel ne sature **ni**
-le compute **ni** la mémoire. Le roofline décrit donc une borne que mon kernel n'atteint pas, parce que
-son vrai goulot est ailleurs.
+Since `63 < 98`, this **idealized model** predicts a memory-bound regime - *provided the kernel
+saturates the bandwidth*. Profiling (§D) shows it does not: the kernel saturates **neither** compute
+**nor** memory. The roofline therefore describes a bound my kernel doesn't reach, because its real
+bottleneck lies elsewhere.
 
 ### D) Profiling (Nsight Compute, `N = 4096`, `d = 64`)
 
-**Mon kernel `_kernel_fa2_forward` :**
+**My kernel `_kernel_fa2_forward`:**
 
-| Métrique | Valeur |
+| Metric | Value |
 |---|---|
-| Compute (SM) throughput | 67,7 % |
-| Memory throughput | 13,7 % |
-| DRAM throughput | 1,25 % |
-| Occupancy (théorique = atteinte) | 8,33 % (4 warps actifs/SM sur 48) |
-| Grid | 64 blocs pour 70 SM → 0,91 wave/SM |
-| Shared memory dynamique | 65,5 Ko/bloc |
-| Limiteur d'occupancy | **shared memory** (1 bloc/SM ; les registres en autoriseraient 2) |
+| Compute (SM) throughput | 67.7% |
+| Memory throughput | 13.7% |
+| DRAM throughput | 1.25% |
+| Occupancy (theoretical = achieved) | 8.33% (4 active warps/SM out of 48) |
+| Grid | 64 blocks for 70 SMs → 0.91 wave/SM |
+| Dynamic shared memory | 65.5 KB/block |
+| Occupancy limiter | **shared memory** (1 block/SM; registers would allow 2) |
 
-**Diagnostic.** Le kernel n'est ni memory-bound (mémoire 13,7 %, DRAM 1,25 %) ni compute-saturé
-(67,7 %) : il est **latency-bound**. Avec seulement 4 warps actifs par SM, il n'y a pas assez de warps
-en vol pour cacher la latence des `tl.dot` et des loads, ni pour saturer un pipe. L'occupancy de 8,33 %
-est plafonnée par la **shared memory** (65,5 Ko/bloc ⇒ un seul bloc par SM ; Nsight estime un gain
-local potentiel de ~92 % en levant cette contrainte).
+**Diagnosis.** The kernel is neither memory-bound (memory 13.7%, DRAM 1.25%) nor compute-saturated
+(67.7%): it is **latency-bound**. With only 4 active warps per SM, there aren't enough warps in flight
+to hide the latency of the `tl.dot` calls and the loads, nor to saturate either pipe. The 8.33%
+occupancy is capped by **shared memory** (65.5 KB/block ⇒ a single block per SM; Nsight estimates a
+~92% local speedup potential from lifting this constraint).
 
-S'ajoute un **sous-remplissage** : la grille ne compte que 64 blocs pour 70 SM (0,91 wave/SM), donc
-certains SM restent inactifs (Nsight signale un déséquilibre de charge, instance minimale à −100 % de
-la moyenne). C'est une conséquence directe de la forme single-head `(1, 1, N, d)`.
+On top of that, the GPU is **underfilled**: the grid holds only 64 blocks for 70 SMs (0.91 wave/SM),
+so some SMs stay idle (Nsight flags a workload imbalance, minimum instance at −100% of the average).
+This is a direct consequence of the single-head `(1, 1, N, d)` shape.
 
-**PyTorch (`flash_fwd_splitkv_kernel` + `flash_fwd_splitkv_combine_kernel`).** PyTorch utilise une
-stratégie *split-KV* (Flash-Decoding) en deux kernels : faute de parallélisme `batch × têtes` (ici = 1),
-il découpe la dimension K/V pour occuper les SM, puis recombine les résultats partiels. Son kernel
-principal mesure compute 71,0 % / mémoire 29,4 % — plus efficace que le mien sur les deux axes, d'où
-l'écart à grand `N`.
+**PyTorch (`flash_fwd_splitkv_kernel` + `flash_fwd_splitkv_combine_kernel`).** PyTorch uses a
+*split-KV* (Flash-Decoding) strategy in two kernels: lacking `batch × heads` parallelism (here = 1),
+it splits the K/V dimension to keep the SMs busy, then recombines the partial results. Its main kernel
+measures compute 71.0% / memory 29.4% - more efficient than mine on both axes, hence the gap at
+large `N`.
 
-### E) Limites et prochaines étapes
+### E) Limitations and next steps
 
-- **Benchmark single-head non représentatif.** Refaire avec un `batch × têtes` réaliste (p. ex.
-  `B = 8, H = 16`) : PyTorch repassera sur son kernel standard (sans split-KV) et la comparaison sera
-  plus juste.
-- **Batching `(B, H, N, d)`** via une dimension de grille `B·H` (le cœur 2D du kernel reste inchangé) :
-  remplit la grille et rend l'occupancy exploitable.
-- **Précision des matmuls.** Le kernel up-converti actuellement Q/K/V en FP32 avant `tl.dot` : les
-  matmuls tournent donc en FP32/TF32, pas en BF16. Cela abaisse le plafond compute réel sous les
-  98 FLOPs/octet du roofline BF16, et double l'empreinte des tuiles en shared memory — contribuant
-  probablement au plafond d'occupancy à 1 bloc/SM. Garder Q/K/V en BF16 pour les matmuls (accumulation
-  FP32 via `tl.dot`) est une piste directe.
-- **Occupancy.** Balayer `num_warps` (4 → 8) et `num_stages` ; réduire la shared memory par bloc pour
-  faire entrer un 2ᵉ bloc/SM.
-- **Roofline mesuré.** Tracer les TFLOP/s atteints face aux deux plafonds plutôt qu'une bande passante
-  algorithmique.
+- **Non-representative single-head benchmark.** Redo it with a realistic `batch × heads`
+  (e.g. `B = 8, H = 16`): PyTorch will fall back to its standard kernel (no split-KV) and the
+  comparison will be fairer.
+- **Batching `(B, H, N, d)`** via a `B·H` grid dimension (the kernel's 2D core stays unchanged):
+  fills the grid and makes occupancy exploitable.
+- **Matmul precision.** The kernel currently up-converts Q/K/V to FP32 before `tl.dot`, so the matmuls
+  run in FP32/TF32, not BF16. This lowers the real compute ceiling below the 98 FLOPs/byte of the BF16
+  roofline, and doubles the shared-memory footprint of the tiles - likely contributing to the
+  1-block/SM occupancy cap. Keeping Q/K/V in BF16 for the matmuls (FP32 accumulation via `tl.dot`) is
+  a direct lever.
+- **Occupancy.** Sweep `num_warps` (4 → 8) and `num_stages`; reduce per-block shared memory to fit a
+  2nd block/SM.
+- **Measured roofline.** Plot achieved TFLOP/s against the two ceilings rather than an algorithmic
+  bandwidth.
