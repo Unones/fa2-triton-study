@@ -12,7 +12,7 @@ and my Triton kernel.
 - **Dimensions:** Q, K, V of shape `(N, d)` with `d = 64`, i.e. `(1, 1, N, d)` in FA2 layout
 - **Masking:** none (non-causal) - the full S matrix contributes to the computation
 
-> ⚠️ **Benchmark caveat.** The shape `(1, 1, N, d)` has **a single head**. It is not representative of
+> ** WARNING : Benchmark caveat.** The shape `(1, 1, N, d)` has **a single head**. It is not representative of
 > a real workload (where `batch × heads` is in the tens to thousands): it underfills the GPU and forces
 > PyTorch into a *split-KV* strategy (see §D). A multi-head benchmark is planned (§E).
 
