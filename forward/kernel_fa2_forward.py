@@ -1,6 +1,5 @@
 import os
 os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
-# os.environ["TRITON_INTERPRET"] = "1"
 
 import triton
 import triton.language as tl
@@ -43,6 +42,51 @@ def _kernel_fa2_forward(
     """
     Compute the attention mecanism using the Flash Attention 2 algorithm.
     
+    The first four pointers are of dimensions (H*B, N, d).
+    
+    Parameters
+    ----------
+    q_ptr
+        The pointer to the query tensor.
+    k_ptr
+        The pointer to the key tensor.
+    v_ptr
+        The pointer to the value tensor.
+    o_ptr
+        The pointer to the output tensor.
+    L_ptr
+        The pointer to the intermediate tensor.
+    size_row
+        Another name for the dimension N.
+    size_col
+        Another name for the dimension N.
+    hidden_dimension
+        The dimension d put to the next power of 2.
+    d
+        The dimension d.
+    d_sqrt
+        Equal to sqrt(d).
+    batch_dim
+        The number H*B to the next power of 2.
+    stride_q_batch
+        The stride of the first dimension of q_ptr.
+    stride_k_batch
+        The stride of the first dimension of k_ptr.
+    stride_v_batch
+        The stride of the first dimension of v_ptr.
+    stride_q_row
+        The stride of the second dimension of q_ptr.
+    stride_k_row
+        The stride of the second dimension of k_ptr.
+    stride_v_row
+        The stride of the second dimension of v_ptr.
+    output_dtype
+        The dtype fo the output.
+    BS_row
+        The block size for the rows.
+    BS_col
+        The block size for the cols.
+    
     """
     
     BS_batch = 1
@@ -65,16 +109,8 @@ def _kernel_fa2_forward(
     offset_L_batch = offset_batch * stride_L_batch
     offset_L = offset_row + offset_L_batch 
 
-    # print(f"pid_batch is equal to : {pid_batch}")
-    # print(f"offset_row is equal to : \n{offset_row}")
-    # print(f"mask_row is equal to : \n{mask_row}")
-
-    
     mask_q = mask_row[:, None] & mask_d[None, :] & mask_batch
     mask_L = mask_row & mask_batch
-    
-    # print(f"offset_q is equal to : \n{offset_q}")
-    # print(f"mask_q is equal to : \n{mask_q}")
 
     q = tl.load(q_ptr + offset_q, mask=mask_q, other=0)
     
@@ -144,16 +180,32 @@ def fa2_forward(
     q_tensor : torch.Tensor, 
     k_tensor : torch.Tensor, 
     v_tensor : torch.Tensor
-):
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Computes the forward attention mechanism using flash attention 2.
     
+    All input tensors must be 4-dimensional : (H, B, N, d).
+    
+    Parameters
+    ----------
+    q_tensor
+        The query tensor.
+    k_tensor
+        The key tensor.
+    v_tensor
+        The value tensor
+    
+    Returns
+    -------
+    o_tensor
+        The output tensor
+    L_tensor
+        The intermediate tensor for the backward pass.
+
+    
     """
     
-    heads = q_tensor.size(0)
-    batch = q_tensor.size(1)
-    N = q_tensor.size(2)
-    d = q_tensor.size(3)
+    heads, batch, N, d = q_tensor.size()
     d_sqrt = sqrt(d)
     
     q_tensor = q_tensor.contiguous()
@@ -222,8 +274,6 @@ if __name__ == "__main__":
     q_tensor = torch.randn((H, B, N, d), dtype=dtype, device=device)
     k_tensor = torch.randn((H, B, N, d), dtype=dtype, device=device)
     v_tensor = torch.randn((H, B, N, d), dtype=dtype, device=device)
-    
-    # print(f"The created q_tensor is equal to : \n{q_tensor}")
     
     o_tensor, L_tensor = fa2_forward(q_tensor, k_tensor, v_tensor)
     
