@@ -10,14 +10,14 @@ from math import ceil, sqrt
 
 @triton.autotune(configs=[
     triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=3),
-    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=4),
-    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=5),
-    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=3),
-    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=4),
-    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 64}, num_stages=4),
-    triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=4),
-    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 128}, num_stages=2),
-    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 128}, num_stages=3),
+    # triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=4),
+    # triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=5),
+    # triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=3),
+    # triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=4),
+    # triton.Config(kwargs={"BS_row" : 32, "BS_col" : 64}, num_stages=4),
+    # triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=4),
+    # triton.Config(kwargs={"BS_row" : 16, "BS_col" : 128}, num_stages=2),
+    # triton.Config(kwargs={"BS_row" : 16, "BS_col" : 128}, num_stages=3),
 
 ],
     key=["size_row", "size_col"]
@@ -50,7 +50,7 @@ def _kernel_fa2_forward(
     offset_q = offset_q_row[:, None] + offset_d[None, :]
     mask_q = mask_row[:, None] & mask_d[None, :]
 
-    q = tl.load(q_ptr + offset_q, mask=mask_q, other=0).to(dtype=tl.float32)
+    q = tl.load(q_ptr + offset_q, mask=mask_q, other=0)
     
     o_row = tl.zeros((BS_row, hidden_dimension), dtype=tl.float32)
     l_row = tl.zeros((BS_row,), dtype=tl.float32)
@@ -70,8 +70,8 @@ def _kernel_fa2_forward(
 
         mask_kv = mask_col[:, None] & mask_d[None, :]
         
-        k = tl.load(k_ptr + offset_k, mask=mask_kv, other=0).to(dtype=tl.float32)
-        v = tl.load(v_ptr + offset_v, mask=mask_kv, other=0).to(dtype=tl.float32)
+        k = tl.load(k_ptr + offset_k, mask=mask_kv, other=0)
+        v = tl.load(v_ptr + offset_v, mask=mask_kv, other=0)
         
         mask_s = mask_row[:, None] & mask_col[None, :]
         
@@ -92,7 +92,7 @@ def _kernel_fa2_forward(
 
         o_row_term_1 = o_row * l_row_term_1[:, None]
 
-        o_row_term_2 = tl.dot(p, v)
+        o_row_term_2 = tl.dot(p, v.to(dtype=tl.float32))
         o_row = o_row_term_1 + o_row_term_2
 
     o_row = o_row / (l_row[:, None] + 1e-6)
