@@ -27,12 +27,12 @@ def main():
     torch.cuda.synchronize()
 
     # Zone profilée
-    torch.cuda.cudart().cudaProfilerStart()
+    torch.cuda.cudart().cudaProfilerStart() #type:ignore
     fa2_forward(q_tensor, k_tensor, v_tensor)
     with _sdpa_kernel_variadic(SDPBackend.FLASH_ATTENTION):
         F.scaled_dot_product_attention(q_tensor_torch, k_tensor_torch, v_tensor_torch)
     torch.cuda.synchronize()
-    torch.cuda.cudart().cudaProfilerStop()
+    torch.cuda.cudart().cudaProfilerStop()  #type:ignore
 
 
 if __name__ == "__main__":
