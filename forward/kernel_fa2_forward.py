@@ -1,6 +1,6 @@
 import os
 os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
-os.environ["TRITON_INTERPRET"] = "1"
+# os.environ["TRITON_INTERPRET"] = "1"
 
 import triton
 import triton.language as tl
@@ -65,22 +65,22 @@ def _kernel_fa2_forward(
     offset_L_batch = offset_batch * stride_L_batch
     offset_L = offset_row + offset_L_batch 
 
-    print(f"pid_batch is equal to : {pid_batch}")
-    print(f"offset_row is equal to : \n{offset_row}")
-    print(f"mask_row is equal to : \n{mask_row}")
+    # print(f"pid_batch is equal to : {pid_batch}")
+    # print(f"offset_row is equal to : \n{offset_row}")
+    # print(f"mask_row is equal to : \n{mask_row}")
 
     
     mask_q = mask_row[:, None] & mask_d[None, :] & mask_batch
     mask_L = mask_row & mask_batch
     
-    print(f"offset_q is equal to : \n{offset_q}")
-    print(f"mask_q is equal to : \n{mask_q}")
+    # print(f"offset_q is equal to : \n{offset_q}")
+    # print(f"mask_q is equal to : \n{mask_q}")
 
     q = tl.load(q_ptr + offset_q, mask=mask_q, other=0)
     
-    o_row = tl.zeros((batch_dim, BS_row, hidden_dimension), dtype=tl.float32)
-    l_row = tl.zeros((batch_dim, BS_row,), dtype=tl.float32)
-    m_row = tl.full((batch_dim, BS_row,), float("-inf"), dtype=tl.float32)
+    o_row = tl.zeros((BS_row, hidden_dimension), dtype=tl.float32)
+    l_row = tl.zeros((BS_row,), dtype=tl.float32)
+    m_row = tl.full((BS_row,), float("-inf"), dtype=tl.float32)
     
     nb_tiles_col = tl.cdiv(size_col, BS_col)
 
@@ -110,7 +110,6 @@ def _kernel_fa2_forward(
         s = tl.dot(q, k_t) / d_sqrt
 
         max_row_s = tl.max(s, axis=1)
-        max_row_s_adapt = tl.where()
         m_row = tl.maximum(former_m_row, max_row_s)
         
         intermediate_matrix_p = tl.where(mask_s, s - m_row[:, None], float("-inf"))
@@ -132,7 +131,7 @@ def _kernel_fa2_forward(
     o_row = o_row.to(dtype=output_dtype)
 
     tl.store(o_ptr + offset_q, o_row, mask=mask_q)
-    tl.store(L_ptr + offset_row, L_row, mask=mask_L)
+    tl.store(L_ptr + offset_L, L_row, mask=mask_L)
     
 torch_to_triton_dtypes = {
     torch.float32 : tl.float32,
@@ -211,9 +210,9 @@ def fa2_forward(
 
 if __name__ == "__main__":
     H = 2
-    B = 1
-    N = 3
-    d = 3
+    B = 10
+    N = 30
+    d = 16
     
     torch.manual_seed(42)
     
@@ -224,7 +223,7 @@ if __name__ == "__main__":
     k_tensor = torch.randn((H, B, N, d), dtype=dtype, device=device)
     v_tensor = torch.randn((H, B, N, d), dtype=dtype, device=device)
     
-    print(f"The created q_tensor is equal to : \n{q_tensor}")
+    # print(f"The created q_tensor is equal to : \n{q_tensor}")
     
     o_tensor, L_tensor = fa2_forward(q_tensor, k_tensor, v_tensor)
     
