@@ -18,7 +18,7 @@ def benchmark_forward():
     d = 64
     sizes_N = [64, 128, 256, 512, 1024, 2048, 4096]
     
-    dtype = torch.float16
+    dtype = torch.bfloat16
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     
     dict = {"size_N" : [], "kernel" : [], "pytorch" : []}
@@ -56,7 +56,7 @@ def benchmark_forward():
     
     plt.plot(dict["size_N"], dict["kernel"], marker="o",label="Custom Triton Kernel")
     plt.plot(dict["size_N"], dict["pytorch"], marker="s", label="Pytorch Implementation")
-    plt.axhline(PEAK_TFLOPS, linestyle="--", color="grey", label = f"RTX 5070 Ti Peak bandwidth ({PEAK_TFLOPS} TFLOP/s) ")
+    plt.axhline(PEAK_TFLOPS, linestyle="--", color="grey", label = f"RTX 5070 Ti Peak throughput ({PEAK_TFLOPS} TFLOP/s) ")
     
     plt.xscale("log", base=2)
     plt.yscale("log")

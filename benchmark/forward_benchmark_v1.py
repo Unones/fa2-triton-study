@@ -19,7 +19,7 @@ def benchmark_forward():
     d = 64
     sizes_N = [64, 128, 256, 512, 1024, 2048, 4096]
     
-    dtype = torch.float16
+    dtype = torch.bfloat16
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     
     dict = {"size_N" : [], "kernel" : [], "pytorch" : []}

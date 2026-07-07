@@ -1,5 +1,5 @@
-import os
-os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
+# import os
+# os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
 
 import triton
 import triton.language as tl
@@ -9,16 +9,19 @@ import torch.nn.functional as F
 from math import ceil, sqrt
 
 @triton.autotune(configs=[
-    # triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=3),
-    # triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=4),
-    # triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=5),
+    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=3),
+    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=4),
+    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=5),
     triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=2),
     triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=3),
     triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=4),
-    # triton.Config(kwargs={"BS_row" : 32, "BS_col" : 64}, num_stages=4),
-    # triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=4),
-    # triton.Config(kwargs={"BS_row" : 16, "BS_col" : 128}, num_stages=2),
-    # triton.Config(kwargs={"BS_row" : 16, "BS_col" : 128}, num_stages=3),
+    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 64}, num_stages=3),
+    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 64}, num_stages=4),
+    triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=2),
+    triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=3),
+    triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=4),
+    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 128}, num_stages=2),
+    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 128}, num_stages=3),
 
 ],
     key=["size_row", "size_col"]
@@ -158,7 +161,7 @@ def _kernel_fa2_forward(
 
         o_row_term_1 = o_row * l_row_term_1[:, None]
 
-        o_row_term_2 = tl.dot(p, v.to(dtype=tl.float32))
+        o_row_term_2 = tl.dot(p.to(dtype=tl.bfloat16), v)
         o_row = o_row_term_1 + o_row_term_2
 
     o_row = o_row / (l_row[:, None] + 1e-6)
@@ -234,9 +237,8 @@ def fa2_forward(
     stride_L_batch = L_tensor.stride(0)
 
     hidden_dimension = triton.next_power_of_2(d)
-    batch_dimension = triton.next_power_of_2(heads*batch)
     
-    grid = lambda META : (ceil(N / META["BS_row"]), batch_dimension)
+    grid = lambda META : (ceil(N / META["BS_row"]), heads*batch)
     
     args = (
         q_tensor, k_tensor, v_tensor,
