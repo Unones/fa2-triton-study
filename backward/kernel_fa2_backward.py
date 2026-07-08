@@ -1,5 +1,5 @@
-# import os
-# os.environ["TRITON_INTERPRET"] = "1"
+import os
+os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
 
 import triton
 import triton.language as tl
@@ -10,6 +10,15 @@ import torch.nn.functional as F
 from forward.kernel_fa2_forward import fa2_forward
 from backward.ref_fa2_D_tensor import ref_D_tensor
 
+@triton.autotune(configs=[
+    # triton.Config(kwargs={"BS_row" : 32}, num_stages=2),
+    # triton.Config(kwargs={"BS_row" : 32}, num_stages=3),
+    # triton.Config(kwargs={"BS_row" : 32}, num_stages=4),
+    # triton.Config(kwargs={"BS_row" : 64}, num_stages=2),
+    triton.Config(kwargs={"BS_row" : 64}, num_stages=3),
+    # triton.Config(kwargs={"BS_row" : 64}, num_stages=4),
+],
+    key=["size_n"],)
 @triton.jit
 def _kernel_D_fa2(
     o_ptr, do_ptr,
@@ -63,6 +72,21 @@ def _kernel_D_fa2(
     
 
 
+@triton.autotune(configs=[
+    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=3),
+    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=4),
+    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=5),
+    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=2),
+    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=3),
+    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=4),
+    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 64}, num_stages=3),
+    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 64}, num_stages=4),
+    triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=2),
+    triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=3),
+    triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=4),
+],
+    key=["size_n"],
+    reset_to_zero=["dq_ptr"])
 @triton.jit
 def _kernel_fa2_backward(
     q_ptr, dq_ptr,
@@ -83,7 +107,6 @@ def _kernel_fa2_backward(
     size_n, d, sqrt_d, 
     size_d : tl.constexpr,
     output_dtype : tl.constexpr,
-    nb_tiles_row,
     BS_row : tl.constexpr,
     BS_col : tl.constexpr
 ):
@@ -94,6 +117,8 @@ def _kernel_fa2_backward(
     
     
     """
+    
+    nb_tiles_row = tl.cdiv(size_n, BS_row)
     
     BS_batch = 1
     
@@ -237,15 +262,9 @@ def fa2_backward(
     stride_k_col = k_tensor.stride(1)
     stride_v_col = v_tensor.stride(1)
     
-    BS_row = 16
-    BS_col = 16
-    
-    nb_tiles_row = math.ceil(N / BS_row)
-    nb_tiles_col = math.ceil(N / BS_col)
-    
     size_d = triton.next_power_of_2(d)
     
-    grid_D = (nb_tiles_row, batch*heads)
+    grid_D = lambda META : (triton.cdiv(N, META["BS_row"]), batch*heads)
     
     triton_dtype = torch_to_triton_dtypes[dtype]
     
@@ -258,7 +277,6 @@ def fa2_backward(
         stride_D_batch,
         stride_o_row,
         stride_do_row,
-        BS_row
     )
     
     _kernel_D_fa2[grid_D](*args_D)      #type:ignore
@@ -266,7 +284,7 @@ def fa2_backward(
     sqrt_d = math.sqrt(d)
     size_d = triton.next_power_of_2(d)
     
-    grid_backward = (nb_tiles_col, batch*heads)
+    grid_backward = lambda META : (triton.cdiv(N, META["BS_col"]), batch*heads)
     
     args_backward = (
         q_tensor, dq_tensor,
@@ -285,8 +303,7 @@ def fa2_backward(
         stride_v_col,
         stride_do_row,
         N, d, sqrt_d, size_d,
-        triton_dtype, nb_tiles_row,
-        BS_row, BS_col
+        triton_dtype,
     )
     
     _kernel_fa2_backward[grid_backward](*args_backward) #type:ignore
