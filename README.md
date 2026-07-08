@@ -16,7 +16,7 @@ and my Triton kernel.
 > a real workload (where `batch × heads` is in the tens to thousands): it underfills the GPU and forces
 > PyTorch into a *split-KV* strategy (see §D). A multi-head benchmark is planned (§E).
 
-<img src="benchmark/figures/forward.png" alt="Comparison FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
+<img src="benchmark/figures/forward_v1.png" alt="Comparison FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
 
 ### A) Reading the plot
 
