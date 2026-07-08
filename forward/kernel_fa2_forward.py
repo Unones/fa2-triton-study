@@ -1,5 +1,5 @@
-# import os
-# os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
+import os
+os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
 
 import triton
 import triton.language as tl
@@ -161,7 +161,7 @@ def _kernel_fa2_forward(
 
         o_row_term_1 = o_row * l_row_term_1[:, None]
 
-        o_row_term_2 = tl.dot(p.to(dtype=tl.bfloat16), v)
+        o_row_term_2 = tl.dot(p.to(dtype=output_dtype), v)
         o_row = o_row_term_1 + o_row_term_2
 
     o_row = o_row / (l_row[:, None] + 1e-6)
