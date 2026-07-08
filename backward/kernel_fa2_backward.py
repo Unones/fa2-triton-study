@@ -20,7 +20,6 @@ def _kernel_D_fa2(
     stride_D_batch,
     stride_o_row,
     stride_do_row,
-    output_dtype : tl.constexpr,
     BS_row : tl.constexpr
 ):
     """
@@ -53,21 +52,13 @@ def _kernel_D_fa2(
     offset_D = offset_row + offset_D_batch
     
     mask = mask_row[:, None] & mask_d[None, :]
-    
-    # print(f"offset_o is equal to : \n{offset_o}")
-    # print(f"offset_do is equal to : \n{offset_do}")
-    
-    # print(f"The mask is equal to : \n{mask}")
-    
+
     o = tl.load(o_ptr + offset_o, mask=mask, other=0).to(tl.float32)
     do = tl.load(do_ptr + offset_do, mask=mask, other=0).to(tl.float32)
     
     pointwise_mul = o * do
     D_mat = tl.sum(pointwise_mul, axis=-1)
-    D_mat = D_mat.to(dtype=output_dtype)
-    
-    # print(f"The result D_mat is equal to : \n{D_mat}")
-    
+
     tl.store(D_ptr + offset_D, D_mat, mask=mask_row)
     
 
@@ -77,19 +68,17 @@ def _kernel_fa2_backward(
     q_ptr, dq_ptr,
     k_ptr, dk_ptr,
     v_ptr, dv_ptr, 
-    o_ptr, do_ptr,
+    do_ptr,
     L_ptr, D_ptr,
     stride_q_batch,
     stride_k_batch,
     stride_v_batch,
-    stride_o_batch,
     stride_do_batch,
     stride_L_batch,
     stride_D_batch,
     stride_q_row,
     stride_k_col,
     stride_v_col,
-    stride_o_row,
     stride_do_row,
     size_n, d, sqrt_d, 
     size_d : tl.constexpr,
@@ -120,7 +109,6 @@ def _kernel_fa2_backward(
     offset_k_batch = offset_batch * stride_k_batch
     offset_v_batch = offset_batch * stride_v_batch
     offset_q_batch = offset_batch * stride_q_batch
-    offset_o_batch = offset_batch * stride_o_batch
     offset_do_batch = offset_batch * stride_do_batch
     offset_L_batch = offset_batch * stride_L_batch
     offset_D_batch = offset_batch * stride_D_batch
@@ -179,9 +167,6 @@ def _kernel_fa2_backward(
         
         ds = p * (dp - D_row[:, None])
         dq = tl.dot(ds.to(dtype=output_dtype), k) / sqrt_d
-        dq = dq.to(dtype=output_dtype)
-        
-        # print(f"dq is equal to : \n{dq}")
         
         tl.atomic_add(dq_ptr + offset_dq, dq)
         
@@ -233,10 +218,10 @@ def fa2_backward(
     do_tensor = do_tensor.view(heads*batch, N, d)
     L_tensor = L_tensor.view(heads*batch, N)
     
-    D_tensor = torch.empty(size=(heads*batch, N,), dtype=dtype, device=device)
-    dq_tensor = torch.zeros(size=(heads*batch, N, d), dtype=dtype, device=device)
-    dk_tensor = torch.empty(size=(heads*batch, N, d), dtype=dtype, device=device)
-    dv_tensor = torch.empty(size=(heads*batch, N, d), dtype=dtype, device=device)
+    D_tensor = torch.empty(size=(heads*batch, N,), dtype=torch.float32, device=device)
+    dq_tensor = torch.zeros(size=(heads*batch, N, d), dtype=torch.float32, device=device)
+    dk_tensor = torch.empty(size=(heads*batch, N, d), dtype=torch.float32, device=device)
+    dv_tensor = torch.empty(size=(heads*batch, N, d), dtype=torch.float32, device=device)
     
     stride_o_batch = o_tensor.stride(0)
     stride_do_batch = do_tensor.stride(0)
@@ -251,8 +236,6 @@ def fa2_backward(
     stride_q_row = q_tensor.stride(1)
     stride_k_col = k_tensor.stride(1)
     stride_v_col = v_tensor.stride(1)
-    
-    
     
     BS_row = 16
     BS_col = 16
@@ -275,7 +258,6 @@ def fa2_backward(
         stride_D_batch,
         stride_o_row,
         stride_do_row,
-        triton_dtype,
         BS_row
     )
     
@@ -290,19 +272,17 @@ def fa2_backward(
         q_tensor, dq_tensor,
         k_tensor, dk_tensor,
         v_tensor, dv_tensor,
-        o_tensor, do_tensor,
+        do_tensor,
         L_tensor, D_tensor,
         stride_q_batch,
         stride_k_batch,
         stride_v_batch,
-        stride_o_batch,
         stride_do_batch,
         stride_L_batch,
         stride_D_batch,
         stride_q_row,
         stride_k_col,
         stride_v_col,
-        stride_o_row,
         stride_do_row,
         N, d, sqrt_d, size_d,
         triton_dtype, nb_tiles_row,
@@ -311,10 +291,10 @@ def fa2_backward(
     
     _kernel_fa2_backward[grid_backward](*args_backward) #type:ignore
     
-    D_tensor = D_tensor.view(batch, heads, N)
-    dq_tensor = dq_tensor.view(batch, heads, N, d)
-    dk_tensor = dk_tensor.view(batch, heads, N, d)
-    dv_tensor = dv_tensor.view(batch, heads, N, d)
+    D_tensor = D_tensor.view(batch, heads, N).to(dtype=dtype)
+    dq_tensor = dq_tensor.view(batch, heads, N, d).to(dtype=dtype)
+    dk_tensor = dk_tensor.view(batch, heads, N, d).to(dtype=dtype)
+    dv_tensor = dv_tensor.view(batch, heads, N, d).to(dtype=dtype)
     
     
     return D_tensor, dq_tensor, dk_tensor, dv_tensor
@@ -328,10 +308,10 @@ def _warmup_autograd():
 
 
 if __name__ == "__main__":
-    B = 8
-    H = 8
-    N = 16
-    d = 16
+    B = 32
+    H = 56
+    N = 56
+    d = 128
     
     dtype = torch.bfloat16
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

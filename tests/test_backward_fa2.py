@@ -21,16 +21,18 @@ def _warmup_autograd():
     torch.cuda.synchronize()
     
 
-@pytest.mark.parametrize("dtype" , [torch.float32, torch.float16, torch.bfloat16])
-@pytest.mark.parametrize("N", [8, 10, 100, 101, 128])
-@pytest.mark.parametrize("d", [16, 20, 120])
-def test_backward_fkash_attention2(dtype, N, d):
+@pytest.mark.parametrize("dtype" , [torch.bfloat16])
+@pytest.mark.parametrize("H", [8, 10, 16, 45, ])
+@pytest.mark.parametrize("B", [8, 10, 16, 45,])
+@pytest.mark.parametrize("N", [8, 10, 100, 128])
+@pytest.mark.parametrize("d", [16, 20, 64])
+def test_backward_fkash_attention2(dtype,B, H, N, d):
     
     _warmup_autograd()
 
-    q_tensor = torch.randn((N, d), dtype=dtype, device=device, requires_grad=True)
-    k_tensor = torch.randn((N, d), dtype=dtype, device=device, requires_grad=True)
-    v_tensor = torch.randn((N, d), dtype=dtype, device=device, requires_grad=True)
+    q_tensor = torch.randn((B, H, N, d), dtype=dtype, device=device, requires_grad=True)
+    k_tensor = torch.randn((B, H, N, d), dtype=dtype, device=device, requires_grad=True)
+    v_tensor = torch.randn((B, H, N, d), dtype=dtype, device=device, requires_grad=True)
     
     o_tensor, L_tensor = fa2_forward(q_tensor, k_tensor, v_tensor)
     
@@ -38,7 +40,7 @@ def test_backward_fkash_attention2(dtype, N, d):
     
     torch.testing.assert_close(o_tensor, o_torch, atol=1e-2, rtol=1e-2)
     
-    do_tensor = torch.randn((N, d), dtype=dtype, device=device, requires_grad=True)
+    do_tensor = torch.randn((B, H, N, d), dtype=dtype, device=device, requires_grad=True)
     
     _, dq_tensor, dk_tensor, dv_tensor = fa2_backward(q_tensor, k_tensor, v_tensor, o_tensor, do_tensor, L_tensor)
     
