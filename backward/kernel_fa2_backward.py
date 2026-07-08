@@ -1,3 +1,6 @@
+import os
+os.environ["TRITON_INTERPRET"] = "1"
+
 import triton
 import triton.language as tl
 import torch
@@ -244,3 +247,38 @@ def _warmup_autograd():
     b = torch.randn(8, 8, device="cuda", requires_grad=True)
     (a @ b).sum().backward()   # force l'init du contexte sur le thread autograd
     torch.cuda.synchronize()
+
+
+if __name__ == "__main__":
+    B = 1
+    H = 1
+    N = 3
+    d = 3
+    
+    dtype = torch.bfloat16
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    
+    _warmup_autograd()
+    
+    q_tensor = torch.randn((1, 1, N, d), dtype=dtype, device=device, requires_grad=True)
+    k_tensor = torch.randn((1, 1, N, d), dtype=dtype, device=device, requires_grad=True)
+    v_tensor = torch.randn((1, 1, N, d), dtype=dtype, device=device, requires_grad=True)
+    
+    o_tensor, L_tensor = fa2_forward(q_tensor, k_tensor, v_tensor)
+    o_torch = F.scaled_dot_product_attention(q_tensor, k_tensor, v_tensor)
+    
+    torch.testing.assert_close(o_tensor, o_torch, atol=1e-2, rtol=1e-2)
+    
+    # do_tensor = torch.randn((N, d), dtype=dtype, device=device, requires_grad=True)
+    
+    # _, dq_tensor, dk_tensor, dv_tensor = fa2_backward(q_tensor, k_tensor, v_tensor, o_tensor, do_tensor, L_tensor)
+    
+    # grad_q, grad_k, grad_v = torch.autograd.grad(
+    #     outputs=o_torch,
+    #     inputs=[q_tensor, k_tensor, v_tensor],
+    #     grad_outputs=do_tensor
+    # )
+    
+    # torch.testing.assert_close(grad_q, dq_tensor, atol=1e-2, rtol=1e-2)
+    # torch.testing.assert_close(grad_k, dk_tensor, atol=1e-2, rtol=1e-2)
+    # torch.testing.assert_close(grad_v, dv_tensor, atol=1e-2, rtol=1e-2)

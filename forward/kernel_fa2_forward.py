@@ -1,5 +1,5 @@
-import os
-os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
+# import os
+# os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
 
 import triton
 import triton.language as tl
@@ -10,18 +10,18 @@ from math import ceil, sqrt
 
 @triton.autotune(configs=[
     triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=3),
-    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=4),
-    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=5),
-    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=2),
-    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=3),
-    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=4),
-    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 64}, num_stages=3),
-    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 64}, num_stages=4),
-    triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=2),
-    triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=3),
-    triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=4),
-    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 128}, num_stages=2),
-    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 128}, num_stages=3),
+    # triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=4),
+    # triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=5),
+    # triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=2),
+    # triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=3),
+    # triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=4),
+    # triton.Config(kwargs={"BS_row" : 32, "BS_col" : 64}, num_stages=3),
+    # triton.Config(kwargs={"BS_row" : 32, "BS_col" : 64}, num_stages=4),
+    # triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=2),
+    # triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=3),
+    # triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=4),
+    # triton.Config(kwargs={"BS_row" : 16, "BS_col" : 128}, num_stages=2),
+    # triton.Config(kwargs={"BS_row" : 16, "BS_col" : 128}, num_stages=3),
 
 ],
     key=["size_row", "size_col"]
