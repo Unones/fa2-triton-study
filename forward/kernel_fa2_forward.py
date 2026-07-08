@@ -209,7 +209,7 @@ def fa2_forward(
     
     """
     
-    heads, batch, N, d = q_tensor.size()
+    batch, heads, N, d = q_tensor.size()
     d_sqrt = sqrt(d)
     
     q_tensor = q_tensor.contiguous()
@@ -257,8 +257,8 @@ def fa2_forward(
     
     _kernel_fa2_forward[grid](*args)        #type:ignore
     
-    o_tensor = o_tensor.view(heads, batch, N, d)
-    L_tensor = L_tensor.view(heads, batch, N)
+    o_tensor = o_tensor.view(batch, heads, N, d)
+    L_tensor = L_tensor.view(batch, heads, N)
     
     return o_tensor, L_tensor
     
@@ -274,9 +274,9 @@ if __name__ == "__main__":
     dtype = torch.bfloat16
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     
-    q_tensor = torch.randn((H, B, N, d), dtype=dtype, device=device)
-    k_tensor = torch.randn((H, B, N, d), dtype=dtype, device=device)
-    v_tensor = torch.randn((H, B, N, d), dtype=dtype, device=device)
+    q_tensor = torch.randn((B, H, N, d), dtype=dtype, device=device)
+    k_tensor = torch.randn((B, H, N, d), dtype=dtype, device=device)
+    v_tensor = torch.randn((B, H, N, d), dtype=dtype, device=device)
     
     o_tensor, L_tensor = fa2_forward(q_tensor, k_tensor, v_tensor)
     

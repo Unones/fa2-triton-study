@@ -27,9 +27,9 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 @pytest.mark.parametrize("d", [16, 20, 120, 256])
 def test_forward_flash_attention2(dtype, H, B, N, d):
 
-    q_tensor = torch.randn((H, B, N, d), dtype=dtype, device=device)
-    k_tensor = torch.randn((H, B, N, d), dtype=dtype, device=device)
-    v_tensor = torch.randn((H, B, N, d), dtype=dtype, device=device)
+    q_tensor = torch.randn((B, H, N, d), dtype=dtype, device=device)
+    k_tensor = torch.randn((B, H, N, d), dtype=dtype, device=device)
+    v_tensor = torch.randn((B, H, N, d), dtype=dtype, device=device)
     
     o_tensor, _ = fa2_forward(q_tensor, k_tensor, v_tensor)
     
