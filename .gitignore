@@ -6,3 +6,5 @@ comandes_utiles.txt
 *.ncu-rep
 testing.py
 **/*.png
+*.nsys-rep
+*pytest*
