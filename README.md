@@ -1,16 +1,28 @@
-Version 2 avec forward et backward prenant en entrée des tenseurs de dimension 4.
-
-# I/ 2-dimensional Forward Pass
+# Results
 
 Comparison between PyTorch's Flash Attention 2 implementation (`F.scaled_dot_product_attention`)
 and my Triton kernel.
 
-- **Hardware:** NVIDIA RTX 5070 Ti (Blackwell, 70 SMs, theoretical HBM bandwidth 896 GB/s)
+- **Hardware:** NVIDIA RTX 5070 Ti (Blackwell, 70 SMs, theoretical throughput of FP16
+tensor cores with FP32 accumulation with 2.30 GHz clock : `82.5 TFLOP/s`)
 - **Precision:** BF16 inputs
-- **Dimensions:** Q, K, V of shape `(N, d)` with `d = 64`, i.e. `(1, 1, N, d)` in FA2 layout
+- **Dimensions:** Q, K, V of shape `(B, H, N, d)` with `B = H = 32`, `d = 64`.
 - **Masking:** none (non-causal) - the full S matrix contributes to the computation
+- **Software:** Python `3.13.13`, PyTorch `2.12.0`, Triton `3.7.0`
 
-> ** WARNING : Benchmark caveat.** The shape `(1, 1, N, d)` has **a single head**. It is not representative of
+**Forward Pass benchmark (4-dimensional input tensors):**
+
+<img src="benchmark/figures/forward_v2.png" alt="Comparison forward v2 FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
+
+**Backward Pass benchmark (4-dimensional input tensors):** 
+
+<img src="benchmark/figures/backward.png" alt="Comparison backward FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
+
+
+# I/ 2-dimensional Forward Pass
+
+
+> *WARNING :* The shape `(1, 1, N, d)` has **a single head**. It is not representative of
 > a real workload (where `batch × heads` is in the tens to thousands): it underfills the GPU and forces
 > PyTorch into a *split-KV* strategy.
 
@@ -123,15 +135,6 @@ au dénominateur se compensent donc. La valeur du ridge point est donc toujours 
 
 On montre donc le benchmark suivant, qui utilise le throughput comme axe de comparaison.
 
-Données pour reproductibilité du benchmark:
-- Python 3.13.13
-- PyTorch 2.12.0
-- Triton 3.7.0
-- Dimensions d'entrée : `(32, 32, *, 64)`
-- Carte Graphique : RTX 5070 Ti
-- Fréquence : 2.30 GHz
-- dtype : `BF16`
-
 <img src="benchmark/figures/forward_v2.png" alt="Comparison forward v2 FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
 
 
@@ -186,8 +189,6 @@ Par conséquent, l'intensité arithmétique vaut : `IA = (10*N)/18`.
 
 Ainsi, pour se donner une marge de manoeuvre avec les approximations mises en place, on peut dire que l'on est en régime
 compute-bound pour `N = 256`.
-
-Pour le benchmark, on utilise des tenseus d'entrée aux dimensions suivantes : `(32, 32, *, 64)`.
 
 <img src="benchmark/figures/backward.png" alt="Comparison backward FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
 
