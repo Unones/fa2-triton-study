@@ -18,6 +18,10 @@ tensor cores with FP32 accumulation with 2.30 GHz clock : `82.5 TFLOP/s`)
 
 <img src="benchmark/figures/backward.png" alt="Comparison backward FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
 
+I will talk about the implementation in 3 steps. First, talk about a forward pass with only 2-dimensional input 
+tensors following exactly Tri Dao's algorithm (memory-bound regime). Secondly, detailed explanation about a 
+forward pass with 4-dimensional input tensors. Finally, the backward pass with 4-dimensional input tensors.
+
 
 # II/ 2-dimensional Forward Pass
 
