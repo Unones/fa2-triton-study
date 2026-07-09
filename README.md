@@ -1,3 +1,5 @@
+Work-in-Progress
+
 # Results
 
 Comparison between PyTorch's Flash Attention 2 implementation (`F.scaled_dot_product_attention`)
@@ -92,58 +94,56 @@ Since `63 < 98`, this **idealized model** predicts a memory-bound regime - *prov
 saturates the bandwidth*. Profiling (§D) shows it does not: the kernel saturates **neither** compute
 **nor** memory. The roofline therefore describes a bound my kernel doesn't reach, because its real
 bottleneck lies elsewhere.
-
-Après avoir appliqué l'algorithme de Tri Dao à la lettre et de n'accepter que des tenseurs de 2 dimensions,
-on peut élargir le scope et rendu possible des tenseurs à 4 dimensions : (B, H, N, d).
+After applying Tri Dao's algorithm to the letter and accepting only 2-dimensional tensors,
+we can broaden the scope and make 4-dimensional tensors possible: (B, H, N, d).
 
 # II/ 4-dimensional Forward Pass
 
-Avant de faire quelconque profiling que ce soit, faisons d'abord un benchmark pour voir comment s'en sort le
-kernel. J'ai mis en place de l'autotunue en couvrant une assez grande plage de `block sizes` et de `num_stages`.
+Before doing any profiling whatsoever, let's first run a benchmark to see how the kernel performs. I set up
+autotuning by covering a fairly large range of `block sizes` and `num_stages`.
 
-Avant de lancer le benchmark, il faut savoir dans quel régime on est. En effet, même si, d'après l'algorithme,
-il y a 2 produits matriciels, on a vu dans la première version que l'on peut-être memory-bound.
+Before launching the benchmark, we need to know which regime we're in. Indeed, even though, according to the
+algorithm, there are 2 matrix products, we saw in the first version that we can be memory-bound.
 
-Par conséquent, reprenons les données et calculs importants du GPU sur lequel je fais tourner ces kernels :
-- Peak Bandwidth de `896 GB/s`
-- Peak Tensor Cores FP16 avec accumulation FP32 de `87.9 TLFOP/s`
-- Nombre total de bytes transférés de `8*B*H*N*d`
-- Nombre total de FLOPs de `4*B*H*N*N*d`
+Therefore, let's take again the important data and computations of the GPU on which I run these kernels:
+- Peak Bandwidth of `896 GB/s`
+- Peak Tensor Cores FP16 with FP32 accumulation of `87.9 TFLOP/s`
+- Total number of bytes transferred of `8*B*H*N*d`
+- Total number of FLOPs of `4*B*H*N*N*d`
 
-Avec les deux premières caractéristiques du GPU, on sait que le ridge point est à `98 FLOPs / byte`.
-Or, dans notre cas, on va s'intéresser aux dimensions suivantes : 
+With the first two GPU characteristics, we know that the ridge point is at `98 FLOPs / byte`.
+Now, in our case, we'll look at the following dimensions:
 - `B = 32`
 - `H = 32`
 - `N = 4096`
 - `d = 64`
 
-Soit, `IA =  4*B*H*N*N*d / 8*B*H*N*d`.
+That is, `AI = 4*B*H*N*N*d / 8*B*H*N*d`.
 
-D'où, `IA = N / 2`.
+Hence, `AI = N / 2`.
 
-Pour ces dimensions, nous sommes dans un régime complètement compute-bound. On l'est même à partir de `N = 256`,
-ce qui représente `2⁸`, qui est la première puissance de 2 à partir de laquelle on est dans le régime
-compute-bound.
+For these dimensions, we are in a completely compute-bound regime. We even are from `N = 256` onward,
+which represents `2⁸`, the first power of 2 from which we are in the compute-bound regime.
 
-Dans toute la suite, que ce soit benchmark ou profiling, forward ou backward, le fréquence du GPU est bloqué
-à 2.30 GHz. Par conséquent, le nombre de Peak TFLOPs est diminué à `82.5 TFLOP/s` car la donnée `87.9 TLFOP/s`
-est pour la fréquence boostée de `2.452 GHz`.
+Throughout the rest, whether benchmark or profiling, forward or backward, the GPU frequency is locked
+at 2.30 GHz. Therefore, the number of Peak TFLOPs is reduced to `82.5 TFLOP/s` because the `87.9 TFLOP/s` figure
+is for the boosted frequency of `2.452 GHz`.
 
-Les calculs de ridge point et d'intensité arithmétique sont toujours valables. En effet, le facteur de baisse de
-fréquence est valable pour le nombre de FLOPs et le nombre de bytes transférés. Les facteurs aux numérateur et 
-au dénominateur se compensent donc. La valeur du ridge point est donc toujours la même.
+The ridge point and arithmetic intensity computations still hold. Indeed, the frequency reduction factor applies
+to both the number of FLOPs and the number of bytes transferred. The factors in the numerator and the
+denominator therefore cancel out. The ridge point value is thus still the same.
 
-On montre donc le benchmark suivant, qui utilise le throughput comme axe de comparaison.
+We therefore show the following benchmark, which uses throughput as the comparison axis.
 
 <img src="benchmark/figures/forward_v2.png" alt="Comparison forward v2 FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
 
 
-Mon kernel et l'implémentation de Pytorch sont très proches. Il y a quelques pourcentages d'écart entre les deux.
+My kernel and the PyTorch implementation are very close. There are a few percentage points of difference between the two.
 
-La ligne en pointillé
+The dashed line
 
-Après ce benchmark, qui est très encourageant dans le fait qu'il y a une légère différence entre les deux implémentations,
-on fait un profiling sur Nsight Compute pour comprendre ce qu'il se passe.
+After this benchmark, which is very encouraging in that there is only a slight difference between the two implementations,
+we run a profiling on Nsight Compute to understand what is happening.
 
 | Metric | Value Custom kernel | Value PyTorch |
 |---|---|---|
@@ -152,58 +152,57 @@ on fait un profiling sur Nsight Compute pour comprendre ce qu'il se passe.
 | DRAM throughput | 4.49% | 4.69% |
 | L2 Hit Rate | 96.88% | 94.80% |
 
-Le profiling sur Nsight Compute confirme bien la tendance que l'on est bien compute-bound. Il y a aussi un fait intéressant 
-qui distingue les deux kernels. Le kernel PyTorch a une utilisation légèrement meilleure des SMs, ce qui explique
-en partie son léger avantage. 
+The Nsight Compute profiling confirms the trend that we are indeed compute-bound. There is also an interesting fact
+that distinguishes the two kernels. The PyTorch kernel has slightly better SM utilization, which partly explains
+its slight advantage.
 
-On a donc un forward kernel qui n'est pas parfaitement au niveau de PyTorch mais qui s'en sort très bien.
+We therefore have a forward kernel that isn't perfectly on par with PyTorch but performs very well.
 
-On peut donc passer au backward car c'est là où il y a le plus de gains par rapport à une implémentation de base.
+We can thus move on to the backward, as that is where there are the most gains compared to a basic implementation.
 
 
 # II/ 4-dimensional Backward Pass
 
-On reprend la méthode de la partie précédente mais en adaptant les données.
+We take again the method from the previous part but adapting the data.
 
-Sur la fiche technique de la RTX 5070 Ti, le peak Tensor Cores FP16 avec accumulation FP32 est de `87.9 TLFOP/s`.
-Cependant, cela est valable que pour une fréquence boostée de `2.45 GHz`.
+On the RTX 5070 Ti spec sheet, the peak Tensor Cores FP16 with FP32 accumulation is `87.9 TFLOP/s`.
+However, this only holds for a boosted frequency of `2.45 GHz`.
 
-Puisque la fréquence de base de cette carte graphique est de `2.30 GHz`, j'ai décidé de la bloquer à cette fréquence.
+Since the base frequency of this graphics card is `2.30 GHz`, I decided to lock it at that frequency.
 
-Par conséquent, la nouvelle valeur du peak Tensor Cores FP16 avec accumulation FP32 est de `82.5 TFLOP/s`.
+Therefore, the new value of the peak Tensor Cores FP16 with FP32 accumulation is `82.5 TFLOP/s`.
 
-Reprenons les données et calculs importants du GPU sur lequel je fais tourner ces kernels :
-- Peak Bandwidth de `840.5 GB/s`
-- Peak Tensor Cores FP16 avec accumulation FP32 de `82.5 TLFOP/s`
-- Nombre total de bytes transférés de `18*B*H*N*d`
-- Nombre total de FLOPs de `10*B*H*N*N*d`
+Let's take again the important data and computations of the GPU on which I run these kernels:
+- Peak Bandwidth of `840.5 GB/s`
+- Peak Tensor Cores FP16 with FP32 accumulation of `82.5 TFLOP/s`
+- Total number of bytes transferred of `18*B*H*N*d`
+- Total number of FLOPs of `10*B*H*N*N*d`
 
-Le facteur `10` pour le nombre de bytes transférés vient du fait que l'on ne prend en compte que les 5 transferts les
-plus importants : `q_tensor`, `k_tensor`, `v_tensor`, `o_tensor`, `do_tensor`, `dq_tensor` (compte double car 
-accumulation en `FP32`), `dk_tensor` et `dv_tensor`.
+The factor `10` for the number of bytes transferred comes from the fact that we only take into account the 5 most
+important transfers: `q_tensor`, `k_tensor`, `v_tensor`, `o_tensor`, `do_tensor`, `dq_tensor` (counts double due to
+accumulation in `FP32`), `dk_tensor` and `dv_tensor`.
 
 
-Le facteur `10` pour le nombre total de FLOPs vient du fait que l'on a 5 produits matriciels.
+The factor `10` for the total number of FLOPs comes from the fact that we have 5 matrix products.
 
-Par conséquent, l'intensité arithmétique vaut : `IA = (10*N)/18`.
+Therefore, the arithmetic intensity is: `AI = (10*N)/18`.
 
-Ainsi, pour se donner une marge de manoeuvre avec les approximations mises en place, on peut dire que l'on est en régime
-compute-bound pour `N = 256`.
+Thus, to give ourselves some margin with the approximations in place, we can say that we are in a compute-bound
+regime for `N = 256`.
 
 <img src="benchmark/figures/backward.png" alt="Comparison backward FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
 
 
-Le benchmark est très intéressant à lire. Premièrement, l'implémentation PyTorch a du mal à atteindre le pic du 
-throughput. À voir au moment du profiling si le kernel est potentiellement latency-bound. Deuxièmement, mon kernel
-est en moyenne deux fois plus lent que l'implémentation de PyTorch.
+The benchmark is very interesting to read. First, the PyTorch implementation struggles to reach the throughput
+peak. To be seen at profiling time whether the kernel is potentially latency-bound. Second, my kernel
+is on average two times slower than the PyTorch implementation.
 
-Une potentielle cause est l'utilisation des atomic add qui peuvent stall le processus le temps de faire le trajet en
-mémoire.
+A potential cause is the use of atomic adds, which can stall the process during the memory round trip.
 
-Pour cela, on fait le profiling de la shape suivante : `(32, 32, 4096, 64)`.
+For this, we profile the following shape: `(32, 32, 4096, 64)`.
 
-En premier lieu, on obtient plusieurs kernels qui s'exécutent (je ne prends pas en compte pas les 
-`vectorized_elementwise_kernel` de PyTorch). Les trois colonnes proviennent du résumé de Nsight Compute.
+First, we obtain several kernels that execute (I do not take into account the
+`vectorized_elementwise_kernel` of PyTorch). The three columns come from the Nsight Compute summary.
 
 | Estimated Speedup (%) | Function Name | Duration (ms) |
 |---|---|---|
@@ -213,10 +212,10 @@ En premier lieu, on obtient plusieurs kernels qui s'exécutent (je ne prends pas
 | 7.95% | flash_bwd_dq_dk_dv_loop_seqk_parallel_kernel | 134.81 ms |
 | 1.29% | flash_bwd_convert_dq_kernel | 2.09 ms |
 
-À l'aide du résumé du profiling, on peut déjà voir se confirmer la tendance que mon kernel principal `_kernel_fa2_backward`
-est environ 2 fois plus lent que l'implémentation PyTorch.
+Using the profiling summary, we can already see the trend confirmed that my main kernel `_kernel_fa2_backward`
+is about 2 times slower than the PyTorch implementation.
 
-Analysons un peu plus en profondeur les métriques de Nisght Compute de mon kernel pour voir son comportement.
+Let's analyze the Nsight Compute metrics of my kernel a bit more deeply to see its behavior.
 
 | Metric | Value |
 |---|---|
@@ -224,19 +223,19 @@ Analysons un peu plus en profondeur les métriques de Nisght Compute de mon kern
 | Memory throughput | 32.71% |
 | L1 Hit Rate | 32.73% |
 | L2 Hit Rate | 22.17% |
-| DRAM throughput | 2.66% | 
+| DRAM throughput | 2.66% |
 
-Le kernel est bel et bien pas memory-bound, mais on ne peut cependant pas affirmer qu'il soit compute-bound non plus.
-`72%` de compute throughput est bien mais pas suffisant pour dire que le compute est le facteur limitant ici.
+The kernel is indeed not memory-bound, but we cannot however claim it is compute-bound either.
+`72%` of compute throughput is good but not sufficient to say that compute is the limiting factor here.
 
-La latence peut potentiellement être le problème mais peu de métriques permettent de s'assurer que c'est bien le cas.
-Cependant, dans Nsight Compute, il est indiqué que l'on a des warp stalls.
+Latency may potentially be the problem but few metrics allow us to make sure that is indeed the case.
+However, in Nsight Compute, it is indicated that we have warp stalls.
 
-On peut donc regarder dans le code source SASS pour voir quelles sont les instructions qui stall.
+We can therefore look at the SASS source code to see which instructions stall.
 
-On observe que les instructions Global Atomic suivantes sont responsables d'un stall moyen de 11% : 
+We observe that the following Global Atomic instructions are responsible for an average stall of 11%:
 ```
 ATOMG.E.ADD.F32*4.FTZ.RN.STRONG.GPU PT, RZ, desc[UR16][R112.64], R148
 ```
 
-On a donc bien des atomic adds qui sont problèmétiques et stall le kernel.
+We therefore do have atomic adds that are problematic and stall the kernel.
