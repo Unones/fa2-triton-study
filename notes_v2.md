@@ -202,7 +202,7 @@ mémoire.
 Pour cela, on fait le profiling de la shape suivante : `(32, 32, 4096, 64)`.
 
 En premier lieu, on obtient plusieurs kernels qui s'exécutent (je ne prends pas en compte pas les 
-`vectorized_elementwise_kernel` de PyTorch).
+`vectorized_elementwise_kernel` de PyTorch). Les trois colonnes proviennent du résumé de Nsight Compute.
 
 | Estimated Speedup (%) | Function Name | Duration (ms) |
 |---|---|---|
@@ -238,5 +238,4 @@ On observe que les instructions Global Atomic suivantes sont responsables d'un s
 ATOMG.E.ADD.F32*4.FTZ.RN.STRONG.GPU PT, RZ, desc[UR16][R112.64], R148
 ```
 
-On a donc bien des atomic adds qui sont problèmétiques et stoppent tout processus le temps de transmettre les données 
-nécessaires car on a un atomic add qui passe par le global memory.
+On a donc bien des atomic adds qui sont problèmétiques et stall le kernel.
