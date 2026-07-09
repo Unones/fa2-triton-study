@@ -55,24 +55,24 @@ def benchmark_forward():
         dict["pytorch"].append(brandwidth_torch)
     
     
-    PEAK_BANDWIDTH = 896    # GB/s
+    PEAK_BANDWIDTH = 896 * (2.30 / 2.452)   # GB/s
     
     plt.plot(dict["size_N"], dict["kernel"], marker="o",label="Custom Triton Kernel")
     plt.plot(dict["size_N"], dict["pytorch"], marker="s", label="Pytorch Implementation")
-    plt.axhline(PEAK_BANDWIDTH, linestyle="--", color="grey", label = f"RTX 5070 Ti Peak bandwidth ({PEAK_BANDWIDTH} GB/s) ")
+    plt.axhline(PEAK_BANDWIDTH, linestyle="--", color="grey", label = f"RTX 5070 Ti Peak bandwidth ({PEAK_BANDWIDTH:.1f} GB/s) ")
     
     plt.xscale("log", base=2)
     plt.yscale("log")
     
     plt.xlabel("Matrix dimension (N)")
     plt.ylabel("Bandwidth (GB/s)")
-    plt.title("Custom kernel vs pytorch Flash Attention 2 - RTX 5070 Ti, FP16")
+    plt.title("Custom kernel vs pytorch Flash Attention 2 - RTX 5070 Ti, BF16")
     
     plt.grid(True, which="both", alpha=0.3)
     plt.legend()
     
     plt.tight_layout()
-    plt.savefig("../fa2-triton-study/benchmark/forward_4dims.png")
+    plt.savefig("../fa2-triton-study/benchmark/figures/forward_v1.png")
 
 
 if __name__ == "__main__":

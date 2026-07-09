@@ -75,7 +75,7 @@ def benchmark_forward():
     
     plt.xlabel("Matrix dimension (N)")
     plt.ylabel("Throughput (TFLOP/s)")
-    plt.title("Custom kernel vs pytorch Flash Attention 2 - RTX 5070 Ti, FP16")
+    plt.title("Backward Pass Flash Attention 2 - RTX 5070 Ti, BF16")
     
     plt.grid(True, which="both", alpha=0.3)
     plt.legend()
