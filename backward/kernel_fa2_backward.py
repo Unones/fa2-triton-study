@@ -1,5 +1,5 @@
-import os
-os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
+# import os
+# os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
 
 import triton
 import triton.language as tl
@@ -11,12 +11,12 @@ from forward.kernel_fa2_forward import fa2_forward
 from backward.ref_fa2_D_tensor import ref_D_tensor
 
 @triton.autotune(configs=[
-    # triton.Config(kwargs={"BS_row" : 32}, num_stages=2),
-    # triton.Config(kwargs={"BS_row" : 32}, num_stages=3),
-    # triton.Config(kwargs={"BS_row" : 32}, num_stages=4),
-    # triton.Config(kwargs={"BS_row" : 64}, num_stages=2),
+    triton.Config(kwargs={"BS_row" : 32}, num_stages=2),
+    triton.Config(kwargs={"BS_row" : 32}, num_stages=3),
+    triton.Config(kwargs={"BS_row" : 32}, num_stages=4),
+    triton.Config(kwargs={"BS_row" : 64}, num_stages=2),
     triton.Config(kwargs={"BS_row" : 64}, num_stages=3),
-    # triton.Config(kwargs={"BS_row" : 64}, num_stages=4),
+    triton.Config(kwargs={"BS_row" : 64}, num_stages=4),
 ],
     key=["size_n"],)
 @triton.jit
