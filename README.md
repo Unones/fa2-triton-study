@@ -237,3 +237,29 @@ These atomics are issued once per (row tile × KV column block), and NCU attribu
 of stalls to them . They are part of the problem - but the kernel table above shows PyTorch 
 also accumulates `dQ` in FP32 (hence its `flash_bwd_convert_dq_kernel`), so atomics alone 
 cannot explain the 2× gap.
+
+
+## Next step: splitting the backward kernel in two
+
+The profiling above points to a structural fix rather than local tuning, for three
+combined reasons:
+
+1. **The register pressure cannot be scheduled away.** The live values are not
+   transient intermediates that a better variable layout could reorder: `dK` and `dV`
+   are FP32 accumulators that must stay alive across the whole loop. Spilling is
+   therefore built into the kernel's current shape.
+2. **The output tensors do not parallelize along the same axis.** `dK`/`dV` are
+   indexed by KV column blocks — aligned with the current grid — while `dQ` is indexed
+   by row blocks, so every program touches all of it (hence the atomics).
+3. **Register spilling is measured, not hypothetical** (NCU reports spills to local
+   memory in the main backward kernel).
+
+One extra observation makes the split affordable: **bandwidth is nowhere near the
+limiting factor** (DRAM throughput at 2.66%). We can therefore pay for extra global
+memory round trips — each kernel reloading its inputs — with a resource that is
+mostly idle, in exchange for relieving the resources that are saturated.
+
+Planned design: one kernel for `dK`/`dV` (parallel over column blocks, as today) and
+one kernel for `dQ` (parallel over row blocks, looping over columns — no atomics
+needed, since each program owns its `dQ` block). This is also the approach taken by
+the official Triton tutorial and the reference FA2 implementation.
