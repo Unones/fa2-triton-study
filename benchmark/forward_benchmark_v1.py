@@ -72,7 +72,7 @@ def benchmark_forward():
     plt.legend()
     
     plt.tight_layout()
-    plt.savefig("../fa2-triton-study/benchmark/figures/forward_v1.png")
+    plt.savefig("../fa2-triton-study/benchmark/figures/forward_v1.png", dpi=600, bbox_inches="tight")
 
 
 if __name__ == "__main__":
