@@ -64,11 +64,11 @@ def benchmark_forward():
         dict["kernel"].append(flop_kernel)
         dict["pytorch"].append(flop_torch)
     
-    PEAK_TFLOPS = 87.9      #TFLOP/s
+    PEAK_TFLOPS = 87.9 *(2.30 / 2.452)     #TFLOP/s
     
     plt.plot(dict["size_N"], dict["kernel"], marker="o",label="Custom Triton Kernel")
     plt.plot(dict["size_N"], dict["pytorch"], marker="s", label="Pytorch Implementation")
-    plt.axhline(PEAK_TFLOPS, linestyle="--", color="grey", label = f"RTX 5070 Ti Peak throughput ({PEAK_TFLOPS} TFLOP/s) ")
+    plt.axhline(PEAK_TFLOPS, linestyle="--", color="grey", label = f"RTX 5070 Ti Peak throughput ({PEAK_TFLOPS:.1f} TFLOP/s) ")
     
     plt.xscale("log", base=2)
     plt.yscale("log")
