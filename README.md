@@ -1,6 +1,6 @@
 Work-in-Progress
 
-# Results
+# I/ Results
 
 Comparison between PyTorch's Flash Attention 2 implementation (`F.scaled_dot_product_attention`)
 and my Triton kernel.
@@ -21,7 +21,7 @@ tensor cores with FP32 accumulation with 2.30 GHz clock : `82.5 TFLOP/s`)
 <img src="benchmark/figures/backward.png" alt="Comparison backward FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
 
 
-# I/ 2-dimensional Forward Pass
+# II/ 2-dimensional Forward Pass
 
 
 > *WARNING :* The shape `(1, 1, N, d)` has **a single head**. It is not representative of
@@ -97,7 +97,7 @@ bottleneck lies elsewhere.
 After applying Tri Dao's algorithm to the letter and accepting only 2-dimensional tensors,
 we can broaden the scope and make 4-dimensional tensors possible: (B, H, N, d).
 
-# II/ 4-dimensional Forward Pass
+# III/ 4-dimensional Forward Pass
 
 Before doing any profiling whatsoever, let's first run a benchmark to see how the kernel performs. I set up
 autotuning by covering a fairly large range of `block sizes` and `num_stages`.
@@ -161,7 +161,7 @@ We therefore have a forward kernel that isn't perfectly on par with PyTorch but 
 We can thus move on to the backward, as that is where there are the most gains compared to a basic implementation.
 
 
-# II/ 4-dimensional Backward Pass
+# IV/ 4-dimensional Backward Pass
 
 We take again the method from the previous part but adapting the data.
 
