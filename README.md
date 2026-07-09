@@ -239,6 +239,11 @@ also accumulates `dQ` in FP32 (hence its `flash_bwd_convert_dq_kernel`), so atom
 cannot explain the 2× gap.
 
 
+Now, onto the other possible cause taht would explain this `2*` difference in speed. In the SASS 
+source code, there are 18 register spillings. However, there are no easy ways to try to reduce it
+dramatically. There is the possibilty of `num_warps=8` but it is more a band-aid than a profound
+change in the algorithm and the structure of the code.
+
 ## Next step: splitting the backward kernel in two
 
 The profiling above points to a structural fix rather than local tuning, for three
