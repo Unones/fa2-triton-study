@@ -133,8 +133,6 @@ The benchmark below uses throughput as the comparison axis; the dashed line mark
 
 My kernel and the PyTorch implementation are very close. There are a few percentage points of difference between the two.
 
-The dashed line
-
 After this benchmark, which is very encouraging in that there is only a slight difference between the two implementations,
 we run a profiling on Nsight Compute to understand what is happening.
 
