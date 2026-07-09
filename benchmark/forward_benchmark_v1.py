@@ -55,11 +55,11 @@ def benchmark_forward():
         dict["pytorch"].append(brandwidth_torch)
     
     
-    PEAK_BANDWIDTH = 896 * (2.30 / 2.452)   # GB/s
+    PEAK_BANDWIDTH = 896  # GB/s
     
     plt.plot(dict["size_N"], dict["kernel"], marker="o",label="Custom Triton Kernel")
     plt.plot(dict["size_N"], dict["pytorch"], marker="s", label="Pytorch Implementation")
-    plt.axhline(PEAK_BANDWIDTH, linestyle="--", color="grey", label = f"RTX 5070 Ti Peak bandwidth ({PEAK_BANDWIDTH:.1f} GB/s) ")
+    plt.axhline(PEAK_BANDWIDTH, linestyle="--", color="grey", label = f"RTX 5070 Ti Peak bandwidth ({PEAK_BANDWIDTH} GB/s) ")
     
     plt.xscale("log", base=2)
     plt.yscale("log")

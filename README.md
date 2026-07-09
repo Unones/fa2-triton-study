@@ -71,7 +71,7 @@ Arithmetic intensity `AI = FLOPs / bytes` places the kernel relative to the roof
 attention (BF16 inputs, FP32 accumulation - the usual FA2 configuration), the card's tensor throughput
 is 87.9 TFLOP/s, hence:
 
-> ridge point = 87.9 TFLOP/s ÷ 896 GB/s ≈ **98 FLOPs/byte**
+> ridge point = 82.5 TFLOP/s ÷ 896 GB/s ≈ **92 FLOPs/byte**
 
 (With FP16 accumulation the throughput would be ~176 TFLOP/s, i.e. ~196 FLOPs/byte; that's not the
 regime targeted here.)
@@ -107,11 +107,11 @@ algorithm, there are 2 matrix products, we saw in the first version that we can 
 
 Therefore, let's take again the important data and computations of the GPU on which I run these kernels:
 - Peak Bandwidth of `896 GB/s`
-- Peak Tensor Cores FP16 with FP32 accumulation of `87.9 TFLOP/s`
+- Peak Tensor Cores FP16 with FP32 accumulation of `82.5 TFLOP/s`
 - Total number of bytes transferred of `8*B*H*N*d`
 - Total number of FLOPs of `4*B*H*N*N*d`
 
-With the first two GPU characteristics, we know that the ridge point is at `98 FLOPs / byte`.
+With the first two GPU characteristics, we know that the ridge point is at `92 FLOPs / byte`.
 Now, in our case, we'll look at the following dimensions:
 - `B = 32`
 - `H = 32`
