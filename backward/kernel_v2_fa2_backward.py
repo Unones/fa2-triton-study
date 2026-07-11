@@ -164,6 +164,8 @@ def _kernel_dk_dv_bwd(
     offset_D_batch = offset_batch * stride_D_batch
 
     mask_col = offset_col < size_n
+    
+    # print(f"mask_col is equal to : \n{mask_col}")
 
     offset_d = tl.arange(0, size_d)
     mask_d = offset_d < d
@@ -186,6 +188,8 @@ def _kernel_dk_dv_bwd(
         offset_do_row = offset_row * stride_do_row
 
         mask_row = offset_row < size_n
+        
+        # print(f"mask_row is equal to : \n{mask_row}")
         
         offset_q = offset_q_row[:, None] + offset_d[None, :] + offset_q_batch
         offset_do = offset_do_row[:, None] + offset_d[None, :] + offset_do_batch
@@ -224,7 +228,148 @@ def _kernel_dk_dv_bwd(
     
     tl.store(dk_ptr + offset_k, dk, mask=mask_kv)
     tl.store(dv_ptr + offset_v, dv, mask=mask_kv)
+
+@triton.autotune(configs=[
+    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=3),
+    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=4),
+    triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=5),
+    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=2),
+    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=3),
+    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 32}, num_stages=4),
+    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 64}, num_stages=3),
+    triton.Config(kwargs={"BS_row" : 32, "BS_col" : 64}, num_stages=4),
+    triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=2),
+    triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=3),
+    triton.Config(kwargs={"BS_row" : 64, "BS_col" : 64}, num_stages=4),
+],
+    key=["size_n"])
+@triton.jit
+def _kernel_dq_bwd(
+    q_ptr, dq_ptr,
+    k_ptr,
+    v_ptr,
+    do_ptr,
+    L_ptr, D_ptr,
+    stride_q_batch,
+    stride_k_batch,
+    stride_v_batch,
+    stride_do_batch,
+    stride_L_batch,
+    stride_D_batch,
+    stride_q_row,
+    stride_k_col,
+    stride_v_col,
+    stride_do_row,
+    size_n, d, sqrt_d, 
+    size_d : tl.constexpr,
+    output_dtype : tl.constexpr,
+    BS_row : tl.constexpr,
+    BS_col : tl.constexpr
+):
+    """
+    Computes the backward gradients of the attention mechanism.
+    
+    It uses the Flash Attention 2 implementation.
+    
+    
+    """
+    
+    nb_tiles_col = tl.cdiv(size_n, BS_col)
+    
+    BS_batch = 1
+    
+    pid_row = tl.program_id(0)
+    pid_batch = tl.program_id(1)
+    
+    offset_row = pid_row * BS_row + tl.arange(0, BS_row)
+    offset_batch = pid_batch * BS_batch
+    
+    offset_q_row = offset_row * stride_q_row
+    offset_do_row = offset_row * stride_do_row
+    
+    offset_k_batch = offset_batch * stride_k_batch
+    offset_v_batch = offset_batch * stride_v_batch
+    offset_q_batch = offset_batch * stride_q_batch
+    offset_do_batch = offset_batch * stride_do_batch
+    offset_L_batch = offset_batch * stride_L_batch
+    offset_D_batch = offset_batch * stride_D_batch
+
+    mask_row = offset_row < size_n
+    
+    # print(f"mask_row is equal to : \n{mask_row}")
+
+    offset_d = tl.arange(0, size_d)
+    mask_d = offset_d < d
+
+    offset_do = offset_do_row[:, None] + offset_d[None, :] + offset_do_batch
+    offset_q = offset_q_row[:, None] + offset_d[None, :] + offset_q_batch
+    offset_dq = offset_q_row[:, None] + offset_d[None, :] + offset_q_batch
+    
+    offset_L = offset_row + offset_L_batch
+    offset_D = offset_row + offset_D_batch
+    
+    mask_qo = mask_row[:, None] & mask_d[None, :]
+    
+    # print(f"mask_qo is equal to : \n{mask_qo}")
+    
+    q = tl.load(q_ptr + offset_q, mask=mask_qo, other=0)
+    do = tl.load(do_ptr + offset_do, mask=mask_qo, other=0)
+    L_row = tl.load(L_ptr + offset_L, mask=mask_row, other=0)
+    D_row = tl.load(D_ptr + offset_D, mask=mask_row, other=0)
+    
+    dq = tl.zeros((BS_row, size_d), dtype=tl.float32)
+    # print(f"dq is equal to : \n{dq}")
+    
+    # print(f"dq is equal to : \n{dq}")
+
+    for j in range(nb_tiles_col):
+        offset_col = j*BS_col + tl.arange(0, BS_col)
         
+        offset_k_col = offset_col * stride_k_col
+        offset_v_col = offset_col * stride_v_col
+
+        mask_col = offset_col < size_n
+        
+        # print(f"mask_col is equal to : \n{mask_col}")
+
+        offset_k = offset_k_col[:, None] + offset_d[None, :] + offset_k_batch
+        offset_v = offset_v_col[:, None] + offset_d[None, :] + offset_v_batch
+        
+        mask_kv = mask_col[:, None] & mask_d[None, :]
+        
+        # print(f"mask_kv is equal to : \n{mask_kv}")
+        
+        k = tl.load(k_ptr + offset_k, mask=mask_kv, other=0)
+        v = tl.load(v_ptr + offset_v, mask=mask_kv, other=0)
+        
+        k_t = tl.trans(k)
+        s = tl.dot(q, k_t) / sqrt_d
+        
+        # print(f"s is equal to : \n{s}")
+        
+        mask_s = mask_row[:, None] & mask_col[None, :]
+        
+        p_intermediate_matrix = tl.where(mask_s, s - L_row[:, None], -float("inf"))
+        p = tl.exp(p_intermediate_matrix)
+        
+        v_t = tl.trans(v)
+
+        dp = tl.dot(do, v_t)
+        
+        ds = p * (dp - D_row[:, None])
+        intermediate_dq = tl.dot(ds.to(dtype=output_dtype), k) / sqrt_d
+        
+        # print(f"intermadiate_dq is equal to : \n{intermediate_dq}")
+        # print(f"ds is equal to : \n{ds}")
+        # print(f"k is equal to : \n{k}")
+
+        dq += intermediate_dq
+    
+    dq = dq.to(dtype=output_dtype)
+
+    tl.store(dq_ptr + offset_dq, dq, mask=mask_qo)
+
+
 
 torch_to_triton_dtypes = {
     torch.float32 : tl.float32,
@@ -305,9 +450,9 @@ def fa2_backward(
     sqrt_d = math.sqrt(d)
     size_d = triton.next_power_of_2(d)
     
-    grid_backward = lambda META : (triton.cdiv(N, META["BS_col"]), batch*heads)
+    grid_dk_dc = lambda META : (triton.cdiv(N, META["BS_col"]), batch*heads)
     
-    args_backward = (
+    args_dk_dv = (
         q_tensor,
         k_tensor, dk_tensor,
         v_tensor, dv_tensor,
@@ -327,7 +472,32 @@ def fa2_backward(
         triton_dtype,
     )
     
-    _kernel_dk_dv_bwd[grid_backward](*args_backward) #type:ignore
+    _kernel_dk_dv_bwd[grid_dk_dc](*args_dk_dv) #type:ignore
+    
+    grid_dq = lambda META : (triton.cdiv(N, META["BS_row"]), batch*heads)
+    
+    args_dq = (
+        q_tensor, dq_tensor,
+        k_tensor,
+        v_tensor,
+        do_tensor,
+        L_tensor, D_tensor,
+        stride_q_batch,
+        stride_k_batch,
+        stride_v_batch,
+        stride_do_batch,
+        stride_L_batch,
+        stride_D_batch,
+        stride_q_row,
+        stride_k_col,
+        stride_v_col,
+        stride_do_row,
+        N, d, sqrt_d, size_d,
+        triton_dtype,
+    )
+    
+    _kernel_dq_bwd[grid_dq](*args_dq)   #type:ignore
+    
     
     D_tensor = D_tensor.view(batch, heads, N).to(dtype=dtype)
     dq_tensor = dq_tensor.view(batch, heads, N, d).to(dtype=dtype)
@@ -347,7 +517,7 @@ def _warmup_autograd():
 if __name__ == "__main__":
     B = 16
     H = 16
-    N = 20
+    N = 200
     d = 16
     
     dtype = torch.bfloat16
@@ -374,3 +544,8 @@ if __name__ == "__main__":
     
     torch.testing.assert_close(dk_tensor, grad_k, atol=1e-2, rtol=1e-2)
     torch.testing.assert_close(dv_tensor, grad_v, atol=1e-2, rtol=1e-2)
+    
+    # print(f"The calculated tensor dq calculated by the kernel is equal to : \n{dq_tensor}")
+    # print(f"The calculated tensor dq by PyTorch is equal to : \n{grad_q}")
+    
+    torch.testing.assert_close(dq_tensor, grad_q, atol=1e-2, rtol=1e-2)
