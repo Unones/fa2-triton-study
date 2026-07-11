@@ -3,8 +3,8 @@
 Comparison between PyTorch's Flash Attention 2 implementation (`F.scaled_dot_product_attention`)
 and my Triton kernel.
 
-- **Hardware:** NVIDIA RTX 5070 Ti (Blackwell, 70 SMs, theoretical throughput of FP16
-tensor cores with FP32 accumulation with 2.30 GHz clock : `82.5 TFLOP/s`)
+- **Hardware:** NVIDIA RTX 5070 Ti (Blackwell, 70 SMs; BF16-input / FP32-accumulation
+tensor-core peak at the locked 2.30 GHz clock: `82.5 TFLOP/s`)
 - **Precision:** BF16 inputs
 - **Dimensions:** Q, K, V of shape `(B, H, N, d)` with `B = H = 32`, `d = 64`.
 - **Masking:** none (non-causal) - the full S matrix contributes to the computation
@@ -14,19 +14,20 @@ tensor cores with FP32 accumulation with 2.30 GHz clock : `82.5 TFLOP/s`)
 
 <img src="benchmark/figures/forward_v2.png" alt="Comparison forward v2 FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
 
-**Backward Pass benchmark (4-dimensional input tensors):** 
+**Backward Pass benchmark (4-dimensional input tensors):**
 
 <img src="benchmark/figures/backward_v2.png" alt="Comparison backward FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
 
-I will talk about the implementation in 3 steps. First, talk about a forward pass with only 2-dimensional input 
-tensors following exactly Tri Dao's algorithm (memory-bound regime). Secondly, detailed explanation about a 
-forward pass with 4-dimensional input tensors. Finally, the backward pass with 4-dimensional input tensors.
+This README walks through the implementation in three steps. First, a forward pass restricted to
+2-dimensional input tensors, following Tri Dao's algorithm to the letter (memory-bound regime).
+Second, the forward pass with 4-dimensional input tensors. Finally, the backward pass with
+4-dimensional input tensors.
 
 
 # II/ 2-dimensional Forward Pass
 
 
-> *WARNING :* The shape `(1, 1, N, d)` has **a single head**. It is not representative of
+> **Warning:** The shape `(1, 1, N, d)` has **a single head**. It is not representative of
 > a real workload (where `batch × heads` is in the tens to thousands): it underfills the GPU and forces
 > PyTorch into a *split-KV* strategy.
 
@@ -35,7 +36,7 @@ forward pass with 4-dimensional input tensors. Finally, the backward pass with 4
 ### A) Reading the plot
 
 At small `N`, my kernel edges out PyTorch - most likely because PyTorch takes a *split-KV* path here in
-two kernels (partial compute + recombination, see §D) whose overhead isn't amortized when there's
+two kernels (partial compute + recombination) whose overhead isn't amortized when there's
 little work, whereas my autotuned kernel runs in a single launch.
 
 From `N ≈ 1024` onward, PyTorch pulls ahead: my kernel is only a direct implementation of Tri Dao's
@@ -92,14 +93,12 @@ Hence:
 
 > `AI = 4·N·B_r·d / (4·d·(B_r + N)) = (B_r·N) / (B_r + N)`
 
-Numerical application (`B_r = 64`, `N = 4096`, `d = 64`): **`AI ≈ 63 FLOPs/byte`**.
+Plugging in numbers (`B_r = 64`, `N = 4096`, `d = 64`): **`AI ≈ 63 FLOPs/byte`**.
 
 Since `63 < 92`, this **idealized model** predicts a memory-bound regime - *provided the kernel
-saturates the bandwidth*. Profiling (§D) shows it does not: the kernel saturates **neither** compute
-**nor** memory. The roofline therefore describes a bound my kernel doesn't reach, because its real
-bottleneck lies elsewhere.
-After applying Tri Dao's algorithm to the letter and accepting only 2-dimensional tensors,
-we can broaden the scope and make 4-dimensional tensors possible: (B, H, N, d).
+saturates the bandwidth*. Profiling showed it does not: the kernel saturates **neither** compute
+**nor** memory (measured DRAM throughput: 1.25%). The roofline therefore describes a bound my
+kernel doesn't reach, because its real bottleneck lies elsewhere.
 
 # III/ 4-dimensional Forward Pass
 
@@ -131,10 +130,11 @@ The benchmark below uses throughput as the comparison axis; the dashed line mark
 <img src="benchmark/figures/forward_v2.png" alt="Comparison forward v2 FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
 
 
-My kernel and the PyTorch implementation are very close. There are a few percentage points of difference between the two.
+My kernel and the PyTorch implementation are very close. There are a few percentage points of
+difference between the two.
 
-After this benchmark, which is very encouraging in that there is only a slight difference between the two implementations,
-we run a profiling on Nsight Compute to understand what is happening.
+After this benchmark, which is very encouraging in that there is only a slight difference between
+the two implementations, we run a profiling on Nsight Compute to understand what is happening.
 
 | Metric | Value Custom kernel | Value PyTorch |
 |---|---|---|
@@ -143,13 +143,14 @@ we run a profiling on Nsight Compute to understand what is happening.
 | DRAM throughput | 4.49% | 4.69% |
 | L2 Hit Rate | 96.88% | 94.80% |
 
-The Nsight Compute profiling confirms the trend that we are indeed compute-bound. There is also an interesting fact
-that distinguishes the two kernels. The PyTorch kernel has slightly better SM utilization, which partly explains
-its slight advantage.
+The Nsight Compute profiling confirms the trend that we are indeed compute-bound. There is also an
+interesting fact that distinguishes the two kernels. The PyTorch kernel has slightly better SM
+utilization, which partly explains its slight advantage.
 
 We therefore have a forward kernel that isn't perfectly on par with PyTorch but performs very well.
 
-We can thus move on to the backward, as that is where there are the most gains compared to a basic implementation.
+We can thus move on to the backward, as that is where there are the most gains compared to a basic
+implementation.
 
 
 # IV/ 4-dimensional Backward Pass
@@ -185,9 +186,9 @@ power-of-two sizes.
 <img src="benchmark/figures/backward.png" alt="Comparison backward FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
 
 
-The benchmark is very interesting to read. First, the PyTorch implementation struggles to reach the throughput
-peak. To be seen at profiling time whether the kernel is potentially latency-bound. Second, my kernel
-is on average two times slower than the PyTorch implementation.
+The benchmark is very interesting to read. First, the PyTorch implementation struggles to reach the
+throughput peak. To be seen at profiling time whether the kernel is potentially latency-bound.
+Second, my kernel is on average two times slower than the PyTorch implementation.
 
 A plausible suspect is the `dQ` atomic adds. Note they cannot cost a full memory round trip: the
 SASS below shows the return value is discarded (destination register `RZ`), so the warp does not
@@ -197,22 +198,24 @@ pipeline when too many atomics are in flight. Let's profile to check.
 For this, we profile the following shape: `(32, 32, 4096, 64)`.
 
 First, we obtain several kernels that execute (I do not take into account the
-`vectorized_elementwise_kernel` of PyTorch). The three columns come from the Nsight Compute summary.
+`vectorized_elementwise_kernel` of PyTorch). The first three columns come from the Nsight Compute
+summary; "Estimated Speedup" is NCU's estimate of the achievable gain if that kernel's top
+bottleneck were resolved.
 
 | Estimated Speedup (%) | Function Name | Duration (ms) | Author |
 |---|---|---|---|
 | 5.55% | _kernel_D_fa2 | 1.31 ms | Mine |
 | 31.69% | _kernel_fa2_backward | 276.91 ms | Mine |
-| 22.32% | flash_bwd_dot_do_o_kernel | 3.13 ms | PyTorch
+| 22.32% | flash_bwd_dot_do_o_kernel | 3.13 ms | PyTorch |
 | 7.95% | flash_bwd_dq_dk_dv_loop_seqk_parallel_kernel | 134.81 ms | PyTorch |
 | 1.29% | flash_bwd_convert_dq_kernel | 2.09 ms | PyTorch |
 
-Total time of custom kernels : `278.22 ms`
+Total time of custom kernels: `278.22 ms`
 
-Total time of PyTorch kernels : `140.03 ms`
+Total time of PyTorch kernels: `140.03 ms`
 
-Using the profiling summary, we can already see the trend confirmed that my main kernel `_kernel_fa2_backward`
-is about 2 times slower than the PyTorch implementation.
+Using the profiling summary, we can already see the trend confirmed that my main kernel
+`_kernel_fa2_backward` is about 2 times slower than the PyTorch implementation.
 
 Let's analyze the Nsight Compute metrics of my kernel a bit more deeply to see its behavior.
 
@@ -225,28 +228,29 @@ Let's analyze the Nsight Compute metrics of my kernel a bit more deeply to see i
 | DRAM throughput | 2.66% |
 
 The kernel is indeed not memory-bound, but we cannot however claim it is compute-bound either.
-`72%` of compute throughput is good but not sufficient to say that compute is the limiting factor here.
+`72%` of compute throughput is good but not sufficient to say that compute is the limiting factor
+here.
 
-Latency may potentially be the problem but few metrics allow us to make sure that is indeed the case.
-However, in Nsight Compute, it is indicated that we have warp stalls.
+Latency may potentially be the problem but few metrics allow us to make sure that is indeed the
+case. However, in Nsight Compute, it is indicated that we have warp stalls.
 
 We can therefore look at the SASS source code to see which instructions stall.
 
-We observe that the following Global Atomic instructions are responsible for an average stall of 11%:
+We observe that the following Global Atomic instructions are responsible for an average stall
+of 11%:
 ```
 ATOMG.E.ADD.F32*4.FTZ.RN.STRONG.GPU PT, RZ, desc[UR16][R112.64], R148
 ```
 
 These atomics are issued once per (row tile × KV column block), and NCU attributes an average 11%
-of stalls to them . They are part of the problem - but the kernel table above shows PyTorch 
-also accumulates `dQ` in FP32 (hence its `flash_bwd_convert_dq_kernel`), so atomics alone 
+of stalls to them. They are part of the problem - but the kernel table above shows PyTorch
+also accumulates `dQ` in FP32 (hence its `flash_bwd_convert_dq_kernel`), so atomics alone
 cannot explain the 2× gap.
 
-
-Now, onto the other possible cause taht would explain this `2*` difference in speed. In the SASS 
-source code, there are 18 register spillings. However, there are no easy ways to try to reduce it
-dramatically. There is the possibilty of `num_warps=8` but it is more a band-aid than a profound
-change in the algorithm and the structure of the code.
+Now, onto the other possible cause that would explain this 2× difference in speed. In the SASS
+source code, NCU reports 18 register spills. There is no easy way to reduce them dramatically:
+`num_warps = 8` is an option, but it is more a band-aid than a structural change to the algorithm
+and the shape of the code.
 
 ## Next step: splitting the backward kernel in two
 
@@ -278,44 +282,49 @@ the official Triton tutorial and the reference FA2 implementation.
 The theory behind the FLOPs and transferred bytes remains the same.
 
 The main difference between the first backward and the second backward is the split using
-three different kernels instead of 2:
+three different kernels instead of two:
 - one kernel calculating the dot product between `o` and `do`
 - one kernel calculating the gradients `dk` and `dv`
 - one kernel calculating the gradient `dq`
 
-It is important to note that even though I use the formula `10·B·H·N·N·d`, for my second
-versino of the backward, there are more FLOPs as there are more matrix multiplications
-in all three kernels.
+It is important to note that even though I use the formula `10·B·H·N·N·d`, the second version
+of the backward executes more FLOPs than that: `S` and `P` are recomputed in *both* gradient
+kernels, for a total of 7 matmuls instead of 5 (4 in the `dk`/`dv` kernel, 3 in the `dq` kernel),
+i.e. `14·B·H·N·N·d` hardware FLOPs.
 
-However, to maintain the right comparison, I still use the factor `10·B·H·N·N·d` as 
-`effective FLOPs`.
+However, to keep the comparison fair, both curves below are normalized by the same
+`10·B·H·N·N·d` *effective* FLOP count - the algorithmic work, independent of how each
+implementation chooses to execute it.
 
-Through another benchmark, we obtain the following results : 
+Through another benchmark, we obtain the following results:
 
 <img src="benchmark/figures/backward_v2.png" alt="Comparison backward v2 FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
 
-There is a difference in throuput of around `+50%` between the first backward and the second
-version. The split strategy was definitely the right one and it paid off.
+The effective throughput improves by roughly **+45%** over the first backward (from ~36 to
+~52 TFLOP/s at the plateau). The split strategy was definitely the right one and it paid off.
 
-Nwo, let's profile with Nsight Compute to understand where most of the time is used for
-computations.
+In *hardware* terms the gap is even smaller than it looks: at ~52 TFLOP/s effective, my kernels
+actually execute `52 × 1.4 ≈ 73 TFLOP/s` of real matmul work - about **88% of the 82.5 TFLOP/s
+peak**, close to PyTorch's own hardware utilization.
 
-The profiling shape is always the same : `(32, 32, 4096, 64)`.
+Now, let's profile with Nsight Compute to understand where most of the time is spent.
+
+The profiling shape is always the same: `(32, 32, 4096, 64)`.
 
 | Estimated Speedup (%) | Function Name | Duration (ms) | Author |
 |---|---|---|---|
 | 5.63% | _kernel_D_fa2 | 1.31 ms | Mine |
 | 32.30% | _kernel_dk_dv_bwd | 107.48 ms | Mine |
 | 27.44% | _kernel_dq_bwd | 80.82 ms | Mine |
-| 22.32% | flash_bwd_dot_do_o_kernel | 3.13 ms | PyTorch
+| 22.32% | flash_bwd_dot_do_o_kernel | 3.13 ms | PyTorch |
 | 7.95% | flash_bwd_dq_dk_dv_loop_seqk_parallel_kernel | 134.81 ms | PyTorch |
 | 1.29% | flash_bwd_convert_dq_kernel | 2.09 ms | PyTorch |
 
-Total time of custom kernels : `189.61 ms`
+Total time of custom kernels: `189.61 ms`
 
-Total time of PyTorch kernels : `140.03 ms`
+Total time of PyTorch kernels: `140.03 ms`
 
-Let's analyze the Nsight Compute metrics of the two split kernels a bit more deeply understand
+Let's analyze the Nsight Compute metrics of the two split kernels a bit more deeply to understand
 what changed.
 
 First the kernel `_kernel_dk_dv_bwd`.
@@ -338,20 +347,29 @@ Then the kernel `_kernel_dq_bwd`.
 | L2 Cache Throughput | 50.24% |
 | DRAM throughput | 4.57% |
 
-Therefore, for both split kernels, they are now using more of the SMs instead of being bound by 
-the latency of register spilling or the atomic adds.
+Both split kernels now make much better use of the SMs (**~93%** compute throughput, versus 72%
+for the fused version) instead of being held back by register-spill latency and atomic adds.
 
-However, all is not all green. Indeed, there are still two register spillings left in the 
-`_kernel_dk_dv_bwd` and there is a barrier synchronization in the `_kernel_dq_bwd` which might
-be the consequence of transposing the tile `k`.
+However, not everything is green. There are still two register spills left in
+`_kernel_dk_dv_bwd`, and a barrier-synchronization stall in `_kernel_dq_bwd`, which might be a
+consequence of transposing the `k` tile at every iteration.
 
 # VI/ Conclusion
 
-To conclude this repository, my close-to-naive implementations of Tri Dao's algorithm allowed me
-to get very close to PyTorch's implementations of the forward and the backward pass.
+The split validated the diagnosis. Both gradient kernels now run at ~93% SM throughput (versus
+72% fused), total backward time on the profiled shape dropped from `278.22 ms` to `189.61 ms`,
+and `dQ` no longer needs atomics - as a bonus, its accumulation order is now deterministic
+run-to-run.
 
-There is still room for improvements. Indeed, removing completely the register spillings and the
-barrier synchronization would allow to gain a little bit more speed.
+The remaining gap versus PyTorch is, almost entirely, the structural price of the split rather
+than execution inefficiency. My design executes `14·B·H·N²·d` hardware FLOPs against ~10 for
+PyTorch's fused kernel - a theoretical ratio of **1.4**, to compare with the measured time ratio
+of `189.61 / 140.03 ≈` **1.35**. Per executed FLOP, the split kernels are on par with PyTorch's
+implementation. Closing that gap would require re-fusing the backward while keeping register
+pressure under control - a level of register and pipeline management (CUTLASS-style) that Triton
+does not expose.
 
-However, I think I went through all the important steps in this repo and leave these optimizations
-on the table.
+The leftover imperfections (two register spills in `_kernel_dk_dv_bwd`, barrier stalls in
+`_kernel_dq_bwd`) are documented above but are not on the critical path at ~93% SM throughput:
+removing them would bring little. I consider the important steps covered, and leave the remaining
+micro-optimizations (e.g. the exp2 trick for the softmax exponential) on the table.
