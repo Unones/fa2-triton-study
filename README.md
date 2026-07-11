@@ -16,7 +16,7 @@ tensor cores with FP32 accumulation with 2.30 GHz clock : `82.5 TFLOP/s`)
 
 **Backward Pass benchmark (4-dimensional input tensors):** 
 
-<img src="benchmark/figures/backward.png" alt="Comparison backward FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
+<img src="benchmark/figures/backward_v2.png" alt="Comparison backward FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
 
 I will talk about the implementation in 3 steps. First, talk about a forward pass with only 2-dimensional input 
 tensors following exactly Tri Dao's algorithm (memory-bound regime). Secondly, detailed explanation about a 
@@ -199,13 +199,16 @@ For this, we profile the following shape: `(32, 32, 4096, 64)`.
 First, we obtain several kernels that execute (I do not take into account the
 `vectorized_elementwise_kernel` of PyTorch). The three columns come from the Nsight Compute summary.
 
-| Estimated Speedup (%) | Function Name | Duration (ms) |
-|---|---|---|
-| 5.55% | _kernel_D_fa2 | 1.31 ms |
-| 31.69% | _kernel_fa2_backward | 276.91 ms |
-| 22.32% | flash_bwd_dot_do_o_kernel | 3.13 ms |
-| 7.95% | flash_bwd_dq_dk_dv_loop_seqk_parallel_kernel | 134.81 ms |
-| 1.29% | flash_bwd_convert_dq_kernel | 2.09 ms |
+| Estimated Speedup (%) | Function Name | Duration (ms) | Author |
+|---|---|---|---|
+| 5.55% | _kernel_D_fa2 | 1.31 ms | Mine |
+| 31.69% | _kernel_fa2_backward | 276.91 ms | Mine |
+| 22.32% | flash_bwd_dot_do_o_kernel | 3.13 ms | PyTorch
+| 7.95% | flash_bwd_dq_dk_dv_loop_seqk_parallel_kernel | 134.81 ms | PyTorch |
+| 1.29% | flash_bwd_convert_dq_kernel | 2.09 ms | PyTorch |
+
+Total time of custom kernels : 278.22 ms
+Total time of PyTorch kernels : 140.03 ms
 
 Using the profiling summary, we can already see the trend confirmed that my main kernel `_kernel_fa2_backward`
 is about 2 times slower than the PyTorch implementation.
@@ -216,8 +219,8 @@ Let's analyze the Nsight Compute metrics of my kernel a bit more deeply to see i
 |---|---|
 | Compute (SM) throughput | 72.24% |
 | Memory throughput | 32.71% |
-| L1 Hit Rate | 32.73% |
-| L2 Hit Rate | 22.17% |
+| L1 Cache Throughput | 32.73% |
+| L2 Cache Throughput | 22.17% |
 | DRAM throughput | 2.66% |
 
 The kernel is indeed not memory-bound, but we cannot however claim it is compute-bound either.
@@ -254,17 +257,97 @@ combined reasons:
    are FP32 accumulators that must stay alive across the whole loop. Spilling is
    therefore built into the kernel's current shape.
 2. **The output tensors do not parallelize along the same axis.** `dK`/`dV` are
-   indexed by KV column blocks — aligned with the current grid — while `dQ` is indexed
+   indexed by KV column blocks - aligned with the current grid - while `dQ` is indexed
    by row blocks, so every program touches all of it (hence the atomics).
 3. **Register spilling is measured, not hypothetical** (NCU reports spills to local
    memory in the main backward kernel).
 
 One extra observation makes the split affordable: **bandwidth is nowhere near the
 limiting factor** (DRAM throughput at 2.66%). We can therefore pay for extra global
-memory round trips — each kernel reloading its inputs — with a resource that is
+memory round trips - each kernel reloading its inputs - with a resource that is
 mostly idle, in exchange for relieving the resources that are saturated.
 
 Planned design: one kernel for `dK`/`dV` (parallel over column blocks, as today) and
-one kernel for `dQ` (parallel over row blocks, looping over columns — no atomics
+one kernel for `dQ` (parallel over row blocks, looping over columns - no atomics
 needed, since each program owns its `dQ` block). This is also the approach taken by
 the official Triton tutorial and the reference FA2 implementation.
+
+# V/ Improvements of 4-dimensional Backward Pass
+
+The theory behind the FLOPs and transferred bytes remains the same.
+
+The main difference between the first backward and the second backward is the split using
+three different kernels instead of 2:
+- one kernel calculating the dot product between `o` and `do`
+- one kernel calculating the gradients `dk` and `dv`
+- one kernel calculating the gradient `dq`
+
+It is important to note that even though I use the formula `10·B·H·N·N·d`, for my second
+versino of the backward, there are more FLOPs as there are more matrix multiplications
+in all three kernels.
+
+However, to maintain the right comparison, I still use the factor `10·B·H·N·N·d` as 
+`effective FLOPs`.
+
+Through another benchmark, we obtain the following results : 
+
+<img src="benchmark/figures/backward_v2.png" alt="Comparison backward v2 FA2 triton vs Pytorch on RTX 5070 Ti" width="700">
+
+There is a difference in throuput of around `+50%` between the first backward and the second
+version. The split strategy was definitely the right one and it paid off.
+
+Nwo, let's profile with Nsight Compute to understand where most of the time is used for
+computations.
+
+| Estimated Speedup (%) | Function Name | Duration (ms) | Author |
+|---|---|---|---|
+| 5.63% | _kernel_D_fa2 | 1.31 ms | Mine |
+| 32.30% | _kernel_dk_dv_bwd | 107.48 ms | Mine |
+| 27.44% | _kernel_dq_bwd | 80.82 ms | Mine |
+| 22.32% | flash_bwd_dot_do_o_kernel | 3.13 ms | PyTorch
+| 7.95% | flash_bwd_dq_dk_dv_loop_seqk_parallel_kernel | 134.81 ms | PyTorch |
+| 1.29% | flash_bwd_convert_dq_kernel | 2.09 ms | PyTorch |
+
+Total time of custom kernels : 189.61 ms
+Total time of PyTorch kernels : 140.03 ms
+
+Let's analyze the Nsight Compute metrics of the two split kernels a bit more deeply understand
+what changed.
+
+First the kernel `_kernel_dk_dv_bwd`.
+
+| Metric | Value |
+|---|---|
+| Compute (SM) throughput | 93.29% |
+| Memory throughput | 33.34% |
+| L1 Cache Throughput | 33.36% |
+| L2 Cache Throughput | 20.07% |
+| DRAM throughput | 4.57% |
+
+Then the kernel `_kernel_dq_bwd`.
+
+| Metric | Value |
+|---|---|
+| Compute (SM) throughput | 93.67% |
+| Memory throughput | 55.17% |
+| L1 Cache Throughput | 55.18% |
+| L2 Cache Throughput | 50.24% |
+| DRAM throughput | 4.57% |
+
+Therefore, for both split kernels, they are now using more of the SMs instead of being bound by 
+the latency of register spilling or the atomic adds.
+
+However, all is not all green. Indeed, there are still two register spillings left in the 
+`_kernel_dk_dv_bwd` and there is a barrier synchronization in the `_kernel_dq_bwd` which might
+be the consequence of transposing the tile `k`.
+
+# VI/ Conclusion
+
+To conclude this repository, my close-to-naive implementations of Tri Dao's algorithm allowed me
+to get very close to PyTorch's implementations of the forward and the backward pass.
+
+There is still room for improvements. Indeed, removing completely the register spillings and the
+barrier synchronization would allow to gain a little bit more speed.
+
+However, I think I went through all the important steps in this repo and leave these optimizations
+on the table.
