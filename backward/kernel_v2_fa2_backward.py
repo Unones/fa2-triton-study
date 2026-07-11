@@ -1,6 +1,3 @@
-# import os
-# os.environ["TRITON_INTERPRET"] = "1"
-
 import triton
 import triton.language as tl
 import torch
@@ -164,20 +161,21 @@ def _kernel_dk_dv_bwd(
     offset_D_batch = offset_batch * stride_D_batch
 
     mask_col = offset_col < size_n
-    
-    # print(f"mask_col is equal to : \n{mask_col}")
 
     offset_d = tl.arange(0, size_d)
     mask_d = offset_d < d
 
     offset_k = offset_k_col[:, None] + offset_d[None, :] + offset_k_batch
-    offset_v = offset_v_col[:, None] + offset_d[None, :] + offset_v_batch
+    offset_v = offset_v_col[None, :] + offset_d[:, None] + offset_v_batch
+    offset_dv = offset_v_col[:, None] + offset_d[None, :] + offset_v_batch
+
+    mask_k = mask_col[:, None] & mask_d[None, :]
+    mask_v = mask_col[None, :] & mask_d[:, None]
+    mask_dv = mask_col[:, None] & mask_d[None, :]
     
-    mask_kv = mask_col[:, None] & mask_d[None, :]
-    
-    k = tl.load(k_ptr + offset_k, mask=mask_kv, other=0)
-    v = tl.load(v_ptr + offset_v, mask=mask_kv, other=0)
-    
+    k = tl.load(k_ptr + offset_k, mask=mask_k, other=0)
+    v_t = tl.load(v_ptr + offset_v, mask=mask_v, other=0)
+
     dk = tl.zeros((BS_col, size_d), dtype=tl.float32)
     dv = tl.zeros((BS_col, size_d), dtype=tl.float32)
 
@@ -188,9 +186,7 @@ def _kernel_dk_dv_bwd(
         offset_do_row = offset_row * stride_do_row
 
         mask_row = offset_row < size_n
-        
-        # print(f"mask_row is equal to : \n{mask_row}")
-        
+
         offset_q = offset_q_row[:, None] + offset_d[None, :] + offset_q_batch
         offset_do = offset_do_row[:, None] + offset_d[None, :] + offset_do_batch
         
@@ -213,7 +209,6 @@ def _kernel_dk_dv_bwd(
         p = tl.exp(p_intermediate_matrix)
         
         p_t = tl.trans(p)
-        v_t = tl.trans(v)
         
         dv += tl.dot(p_t.to(dtype=output_dtype), do)
         dp = tl.dot(do, v_t)
@@ -226,8 +221,8 @@ def _kernel_dk_dv_bwd(
     dk = dk.to(dtype=output_dtype)
     dv = dv.to(dtype=output_dtype)
     
-    tl.store(dk_ptr + offset_k, dk, mask=mask_kv)
-    tl.store(dv_ptr + offset_v, dv, mask=mask_kv)
+    tl.store(dk_ptr + offset_k, dk, mask=mask_k)
+    tl.store(dv_ptr + offset_dv, dv, mask=mask_dv)
 
 @triton.autotune(configs=[
     triton.Config(kwargs={"BS_row" : 16, "BS_col" : 16}, num_stages=3),
@@ -295,8 +290,6 @@ def _kernel_dq_bwd(
     offset_D_batch = offset_batch * stride_D_batch
 
     mask_row = offset_row < size_n
-    
-    # print(f"mask_row is equal to : \n{mask_row}")
 
     offset_d = tl.arange(0, size_d)
     mask_d = offset_d < d
@@ -309,18 +302,13 @@ def _kernel_dq_bwd(
     offset_D = offset_row + offset_D_batch
     
     mask_qo = mask_row[:, None] & mask_d[None, :]
-    
-    # print(f"mask_qo is equal to : \n{mask_qo}")
-    
+
     q = tl.load(q_ptr + offset_q, mask=mask_qo, other=0)
     do = tl.load(do_ptr + offset_do, mask=mask_qo, other=0)
     L_row = tl.load(L_ptr + offset_L, mask=mask_row, other=0)
     D_row = tl.load(D_ptr + offset_D, mask=mask_row, other=0)
     
     dq = tl.zeros((BS_row, size_d), dtype=tl.float32)
-    # print(f"dq is equal to : \n{dq}")
-    
-    # print(f"dq is equal to : \n{dq}")
 
     for j in range(nb_tiles_col):
         offset_col = j*BS_col + tl.arange(0, BS_col)
@@ -329,40 +317,28 @@ def _kernel_dq_bwd(
         offset_v_col = offset_col * stride_v_col
 
         mask_col = offset_col < size_n
-        
-        # print(f"mask_col is equal to : \n{mask_col}")
 
         offset_k = offset_k_col[:, None] + offset_d[None, :] + offset_k_batch
-        offset_v = offset_v_col[:, None] + offset_d[None, :] + offset_v_batch
+        offset_v = offset_v_col[None, :] + offset_d[:, None] + offset_v_batch
         
-        mask_kv = mask_col[:, None] & mask_d[None, :]
-        
-        # print(f"mask_kv is equal to : \n{mask_kv}")
-        
-        k = tl.load(k_ptr + offset_k, mask=mask_kv, other=0)
-        v = tl.load(v_ptr + offset_v, mask=mask_kv, other=0)
-        
+        mask_k = mask_col[:, None] & mask_d[None, :]
+        mask_v = mask_col[None, :] & mask_d[:, None]
+
+        k = tl.load(k_ptr + offset_k, mask=mask_k, other=0)
+        v_t = tl.load(v_ptr + offset_v, mask=mask_v, other=0)
+
         k_t = tl.trans(k)
         s = tl.dot(q, k_t) / sqrt_d
-        
-        # print(f"s is equal to : \n{s}")
-        
+
         mask_s = mask_row[:, None] & mask_col[None, :]
         
         p_intermediate_matrix = tl.where(mask_s, s - L_row[:, None], -float("inf"))
         p = tl.exp(p_intermediate_matrix)
-        
-        v_t = tl.trans(v)
 
         dp = tl.dot(do, v_t)
         
         ds = p * (dp - D_row[:, None])
         intermediate_dq = tl.dot(ds.to(dtype=output_dtype), k) / sqrt_d
-        
-        # print(f"intermadiate_dq is equal to : \n{intermediate_dq}")
-        # print(f"ds is equal to : \n{ds}")
-        # print(f"k is equal to : \n{k}")
-
         dq += intermediate_dq
     
     dq = dq.to(dtype=output_dtype)
@@ -427,6 +403,8 @@ def fa2_backward(
     stride_q_row = q_tensor.stride(1)
     stride_k_col = k_tensor.stride(1)
     stride_v_col = v_tensor.stride(1)
+    
+    v_tensor = v_tensor.transpose(1, 2)
     
     size_d = triton.next_power_of_2(d)
     
@@ -544,8 +522,4 @@ if __name__ == "__main__":
     
     torch.testing.assert_close(dk_tensor, grad_k, atol=1e-2, rtol=1e-2)
     torch.testing.assert_close(dv_tensor, grad_v, atol=1e-2, rtol=1e-2)
-    
-    # print(f"The calculated tensor dq calculated by the kernel is equal to : \n{dq_tensor}")
-    # print(f"The calculated tensor dq by PyTorch is equal to : \n{grad_q}")
-    
     torch.testing.assert_close(dq_tensor, grad_q, atol=1e-2, rtol=1e-2)
