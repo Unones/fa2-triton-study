@@ -207,8 +207,9 @@ First, we obtain several kernels that execute (I do not take into account the
 | 7.95% | flash_bwd_dq_dk_dv_loop_seqk_parallel_kernel | 134.81 ms | PyTorch |
 | 1.29% | flash_bwd_convert_dq_kernel | 2.09 ms | PyTorch |
 
-Total time of custom kernels : 278.22 ms
-Total time of PyTorch kernels : 140.03 ms
+Total time of custom kernels : `278.22 ms`
+
+Total time of PyTorch kernels : `140.03 ms`
 
 Using the profiling summary, we can already see the trend confirmed that my main kernel `_kernel_fa2_backward`
 is about 2 times slower than the PyTorch implementation.
@@ -299,6 +300,8 @@ version. The split strategy was definitely the right one and it paid off.
 Nwo, let's profile with Nsight Compute to understand where most of the time is used for
 computations.
 
+The profiling shape is always the same : `(32, 32, 4096, 64)`.
+
 | Estimated Speedup (%) | Function Name | Duration (ms) | Author |
 |---|---|---|---|
 | 5.63% | _kernel_D_fa2 | 1.31 ms | Mine |
@@ -308,8 +311,9 @@ computations.
 | 7.95% | flash_bwd_dq_dk_dv_loop_seqk_parallel_kernel | 134.81 ms | PyTorch |
 | 1.29% | flash_bwd_convert_dq_kernel | 2.09 ms | PyTorch |
 
-Total time of custom kernels : 189.61 ms
-Total time of PyTorch kernels : 140.03 ms
+Total time of custom kernels : `189.61 ms`
+
+Total time of PyTorch kernels : `140.03 ms`
 
 Let's analyze the Nsight Compute metrics of the two split kernels a bit more deeply understand
 what changed.
